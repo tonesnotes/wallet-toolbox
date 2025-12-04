@@ -1,5 +1,6 @@
 import { mockUnderlyingWallet, MockedBSV_SDK } from './WalletPermissionsManager.fixtures'
-import { WalletPermissionsManager } from '../WalletPermissionsManager'
+import { WalletPermissionsManager, GroupedPermissions } from '../WalletPermissionsManager'
+import { WalletProtocol } from '@bsv/sdk'
 
 import { jest } from '@jest/globals'
 
@@ -319,5 +320,143 @@ describe('WalletPermissionsManager - Callbacks & Event Handling', () => {
     // call1 resolves, call2 rejects
     await expect(call1).resolves.toBeDefined()
     await expect(call2).rejects.toThrow(/Permission denied/)
+  })
+
+  // -------------------------------------------------------------------------
+  // 3) Grouped Permission Error Handling Tests
+  // -------------------------------------------------------------------------
+
+  describe('grantGroupedPermission error handling', () => {
+    it('should reject pending promises when grantGroupedPermission throws a validation error', async () => {
+      // This test verifies the fix for the bug where pending promises would hang forever
+      // if grantGroupedPermission() threw an error during validation.
+
+      const groupedCb = jest.fn(() => {})
+      manager.bindCallback('onGroupedPermissionRequested', groupedCb)
+
+      // Manually set up a grouped permission request in the activeRequests map
+      // This simulates what happens when waitForAuthentication() is called
+      const requestID = 'group:test-originator.com'
+      const originalRequest = {
+        originator: 'test-originator.com',
+        permissions: {
+          protocolPermissions: [
+            { protocolID: [1, 'requested-protocol'] as WalletProtocol, counterparty: 'self', description: 'test' }
+          ]
+        }
+      }
+
+      // Create a promise that would normally hang forever if the fix isn't in place
+      let resolvedValue: any = null
+      let rejectedError: any = null
+      const pendingPromise = new Promise<boolean>((resolve, reject) => {
+        ;(manager as any).activeRequests.set(requestID, {
+          request: originalRequest,
+          pending: [{ resolve, reject }]
+        })
+      }).then(
+        val => {
+          resolvedValue = val
+          return val
+        },
+        err => {
+          rejectedError = err
+          throw err
+        }
+      )
+
+      // Try to grant with MISMATCHED permissions (different protocol than requested)
+      // This should cause grantGroupedPermission to throw a validation error
+      const grantPromise = manager.grantGroupedPermission({
+        requestID,
+        granted: {
+          protocolPermissions: [
+            { protocolID: [1, 'DIFFERENT-protocol'] as WalletProtocol, counterparty: 'self', description: 'test' }
+          ]
+        }
+      })
+
+      // grantGroupedPermission should throw
+      await expect(grantPromise).rejects.toThrow(/not a subset of the original request/)
+
+      // The pending promise should also be rejected (not left hanging!)
+      await expect(pendingPromise).rejects.toThrow(/not a subset of the original request/)
+
+      // Verify the activeRequests map was cleaned up
+      expect((manager as any).activeRequests.has(requestID)).toBe(false)
+    })
+
+    it('should clean up activeRequests even when grantGroupedPermission throws', async () => {
+      // Set up a request
+      const requestID = 'group:cleanup-test.com'
+      ;(manager as any).activeRequests.set(requestID, {
+        request: {
+          originator: 'cleanup-test.com',
+          permissions: { protocolPermissions: [] }
+        },
+        pending: [
+          {
+            resolve: () => {},
+            reject: () => {}
+          }
+        ]
+      })
+
+      // Verify it's in the map
+      expect((manager as any).activeRequests.has(requestID)).toBe(true)
+
+      // Grant with mismatched spending authorization to trigger an error
+      await expect(
+        manager.grantGroupedPermission({
+          requestID,
+          granted: {
+            spendingAuthorization: { amount: 1000, description: 'test' }
+          }
+        })
+      ).rejects.toThrow()
+
+      // The request should be cleaned up even though an error was thrown
+      expect((manager as any).activeRequests.has(requestID)).toBe(false)
+    })
+
+    it('should resolve pending promises when grantGroupedPermission succeeds', async () => {
+      // Mock createPermissionOnChain to prevent actual on-chain operations
+      jest.spyOn(manager as any, 'createPermissionOnChain').mockResolvedValue(undefined)
+
+      const requestID = 'group:success-test.com'
+      const requestedPermissions: Partial<GroupedPermissions> = {
+        protocolPermissions: [
+          { protocolID: [1, 'test-proto'] as WalletProtocol, counterparty: 'self', description: 'Test' }
+        ]
+      }
+
+      // Set up a pending request
+      let wasResolved = false
+      const pendingPromise = new Promise<boolean>((resolve, reject) => {
+        ;(manager as any).activeRequests.set(requestID, {
+          request: {
+            originator: 'success-test.com',
+            permissions: requestedPermissions
+          },
+          pending: [{ resolve, reject }]
+        })
+      }).then(val => {
+        wasResolved = true
+        return val
+      })
+
+      // Grant with matching permissions
+      await manager.grantGroupedPermission({
+        requestID,
+        granted: requestedPermissions
+      })
+
+      // The pending promise should resolve
+      await expect(pendingPromise).resolves.toBe(true)
+      expect(wasResolved).toBe(true)
+
+      // The request should be cleaned up
+      expect((manager as any).activeRequests.has(requestID)).toBe(false)
+    })
   })
 })
