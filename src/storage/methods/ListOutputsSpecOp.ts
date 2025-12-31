@@ -79,6 +79,7 @@ export const getBasketToSpecOp: () => Record<string, ListOutputsSpecOp> = () => 
         const filteredOutputs: TableOutput[] = []
         const services = s.getServices()
         for (const o of outputs) {
+          if (!o.basketId) continue // only care about outputs assigned to baskets.
           await s.validateOutputScript(o)
           let ok: boolean | undefined = false
           if (o.lockingScript && o.lockingScript.length > 0) {

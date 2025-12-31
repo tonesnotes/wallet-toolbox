@@ -177,7 +177,7 @@ describe('localWallet2 tests', () => {
 
   test('7 review and unfail false invalids', async () => {
     const { env, storage, services } = await createMainReviewSetup()
-    let offset = 400
+    let offset = 1000
     const limit = 100
     let allUnfails: number[] = []
     for (;;) {
@@ -187,7 +187,7 @@ describe('localWallet2 tests', () => {
       for (const req of reqs) {
         if (!req.txid || !req.rawTx) continue
         const gsr = await services.getStatusForTxids([req.txid])
-        if (gsr.results[0].status !== 'unknown') {
+        if (gsr.results[0]?.status !== 'unknown') {
           log += `unfail ${req.provenTxReqId} ${req.txid}\n`
           unfails.push(req.provenTxReqId)
         }

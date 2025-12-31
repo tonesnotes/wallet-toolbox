@@ -9,12 +9,19 @@ describe('operations.man tests', () => {
   jest.setTimeout(99999999)
 
   test('0 review and release all production invalid change utxos', async () => {
+    // const tags = [] // only return invalid change utxos, do not update them to unspendable.
+    // const tags = ['release'] // release invalid change utxos to unspendable
+    const tags = ['all'] // only return invalid utxos, do not update them to unspendable.
+    // const tags = ['release', 'all'] // release invalid utxos to unspendable
+    const action = tags.includes('release') ? 'updated to unspendable' : 'found'
+    const target = tags.includes('all') ? 'spendable utxos' : 'spendable change utxos'
     const { env, storage } = await _tu.createMainReviewSetup()
-    const users = await storage.findUsers({ partial: { userId: 124 } })
+    const users = await storage.findUsers({ partial: { userId: 88 } })
+    // const users = await storage.findUsers({ partial: {} }) // all users...
     const withInvalid: Record<number, { user: TableUser; outputs: WalletOutput[]; total: number }> = {}
     const vargs: Validation.ValidListOutputsArgs = {
       basket: specOpInvalidChange,
-      tags: ['release'],
+      tags,
       tagQueryMode: 'all',
       includeLockingScripts: false,
       includeTransactions: false,
@@ -33,7 +40,7 @@ describe('operations.man tests', () => {
       let r = await storage.listOutputs(auth, vargs)
       if (r.totalOutputs > 0) {
         const total: number = r.outputs.reduce((s, o) => (s += o.satoshis), 0)
-        let l = `userId ${userId}: ${r.totalOutputs} utxos updated, total ${total}, ${user.identityKey}\n`
+        let l = `userId ${userId}: ${r.totalOutputs} ${target} ${action}, total ${total}, ${user.identityKey}\n`
         for (const o of r.outputs) {
           l += `  ${o.outpoint} ${o.satoshis} now ${o.spendable ? 'spendable' : 'spent'}\n`
         }
@@ -42,7 +49,7 @@ describe('operations.man tests', () => {
         withInvalid[userId] = { user, outputs: r.outputs, total }
       }
     }
-    console.log(log || 'Found zero invalid change outputs.')
+    console.log(log || `zero invalid ${target} ${action}.`)
     await storage.destroy()
   })
 

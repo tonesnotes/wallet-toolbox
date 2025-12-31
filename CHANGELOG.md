@@ -4,6 +4,15 @@ This document captures the history of significant changes to the wallet-toolbox 
 The git commit history contains the details but is unable to draw
 attention to changes that materially alter behavior or extend functionality.
 
+## wallet-toolbox 1.7.17
+
+- Fix push.yaml to sync versions, correct root package contents (no mobile), and publish client and mobile
+
+## wallet-toolbox 1.7.15
+
+- Fix specOpInvalidChange to always ignore unbasketted outputs.
+- Update dependency to bsv/sdk 1.9.24
+
 ## wallet-toolbox 1.7.13
 
 - Fix moreSatoshisNeeded amount in WERR_INSUFFICIENT_FUNDS (was releasing allocated change before saving value).
