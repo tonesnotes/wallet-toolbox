@@ -75,10 +75,26 @@ describe('specOps tests', () => {
   test('0a wallet balance method', async () => {
     const setup = await createSetup('test')
 
-    const r = await setup.wallet.balance()
+    const tcs: (ListOutputsArgs | undefined)[] = [
+      undefined,
+      // Default basket without tag
+      { basket: 'default' },
+      // Custom basket with tag
+      { basket: 'test-output', tags: ['test-output'], tagQueryMode: 'all' },
+      // Custom basket without tag
+      { basket: 'test-output' },
+    ]
+    for (const tc of tcs) {
+      const args = tc || { basket: 'default' }
+      args.limit = 10000
+      args.offset = 0
+      const r = await setup.wallet.listOutputs(args)
+      const sum = r.outputs.reduce((acc, o) => acc + o.satoshis, 0)
 
-    expect(r > 0).toBe(true)
+      const sum2 = await setup.wallet.balance(tc)
 
+      expect(sum2).toBe(sum)
+    }
     await setup.wallet.destroy()
   })
 
