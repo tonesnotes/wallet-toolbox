@@ -12,6 +12,9 @@ export interface ListOutputsSpecOp {
   ignoreLimit?: boolean
   includeOutputScripts?: boolean
   includeSpent?: boolean
+  /**
+   * If true, and supported by storage, maximum performance optimization, computing balance done in the query itself.
+   */
   totalOutputsIsSumOfSatoshis?: boolean
   resultFromTags?: (
     s: StorageProvider,
@@ -51,11 +54,7 @@ const getBasketToSpecOp: () => Record<string, ListOutputsSpecOp> = () => {
       name: 'totalOutputsIsWalletBalance',
       useBasket: 'default',
       ignoreLimit: true,
-      /**
-       * To support maximum performance optimization, computing balance is done in the query itself.
-       */
       totalOutputsIsSumOfSatoshis: true,
-      /* This alternative computes total from outputs returned by query.
       resultFromOutputs: async (
         s: StorageProvider,
         auth: AuthId,
@@ -67,7 +66,6 @@ const getBasketToSpecOp: () => Record<string, ListOutputsSpecOp> = () => {
         for (const o of outputs) totalOutputs += o.satoshis
         return { totalOutputs, outputs: [] }
       }
-      */
     },
     [specOpInvalidChange]: {
       name: 'invalidChangeOutputs',
@@ -141,6 +139,7 @@ const getTagToSpecOp: () => Record<string, ListOutputsSpecOp> = () => {
       name: 'totalOutputsIsWalletBalance',
       useBasket: 'default',
       ignoreLimit: true,
+      totalOutputsIsSumOfSatoshis: true,
       resultFromOutputs: async (
         s: StorageProvider,
         auth: AuthId,

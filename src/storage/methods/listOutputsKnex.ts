@@ -134,7 +134,7 @@ export async function listOutputs(
   const txStatusOk = `(select status as tstatus from transactions where transactions.transactionId = outputs.transactionId) in ('completed', 'unproven', 'nosend', 'sending')`
   const txStatusOkCteq = `(select status as tstatus from transactions where transactions.transactionId = o.transactionId) in ('completed', 'unproven', 'nosend', 'sending')`
 
-  const makeWithTagsQueries = () => {
+  const makeWithTagsQuery = () => {
     let cteqOptions = ''
     if (basketId) cteqOptions += ` AND o.basketId = ${basketId}`
     if (!includeSpent) cteqOptions += ` AND o.spendable`
@@ -153,6 +153,10 @@ export async function listOutputs(
     q.from('otc')
     if (isQueryModeAll) q.where('tc', tagIds.length)
     else q.where('tc', '>', 0)
+    return q
+  }
+  const makeWithTagsQueries = () => {
+    const q = makeWithTagsQuery()
     const qcount = q.clone()
     q.select(columns)
     qcount.count('outputId as total')
@@ -167,8 +171,9 @@ export async function listOutputs(
   }
   const makeWithoutTagsQueries = () => {
     const where = makeWhere()
-    const q = k('outputs').columns(columns).where(where).whereRaw(txStatusOk)
+    const q = k('outputs').where(where).whereRaw(txStatusOk)
     const qcount = q.clone().count('outputId as total')
+    q.columns(columns)
     return { q, qcount }
   }
 
@@ -180,13 +185,11 @@ export async function listOutputs(
       r.totalOutputs = Number(rsum ? rsum['totalSatoshis'] || 0 : 0)
       return r
     } else {
-      const { q } = makeWithTagsQueries()
-      if (!specOp.ignoreLimit) q.limit(limit).offset(offset)
-      if (!specOp.resultFromOutputs) {
-        throw new WERR_INTERNAL('SpecOp with totalOutputsIsSumOfSatoshis must have valid resultFromOutputs')
-      }
-      let outputs: TableOutput[] = await q
-      const r = await specOp.resultFromOutputs(dsk, auth, vargs, specOpTags, outputs)
+      columns = [ 'outputId', 'basketId', 'spendable', 'satoshis' ]
+      const q = makeWithTagsQuery()
+      q.sum('satoshis as totalSatoshis')
+      const rsum = await q.first()
+      r.totalOutputs = Number(rsum ? rsum['totalSatoshis'] || 0 : 0)
       return r
     }
   }
