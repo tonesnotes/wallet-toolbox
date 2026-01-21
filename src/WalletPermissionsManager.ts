@@ -457,7 +457,7 @@ export class WalletPermissionsManager implements WalletInterface {
   private activeRequests: Map<
     string,
     {
-      request: PermissionRequest | { originator: string; permissions: GroupedPermissions }
+      request: PermissionRequest | { originator: string; permissions: GroupedPermissions; displayOriginator?: string }
       pending: Array<{
         resolve: (val: any) => void
         reject: (err: any) => void
@@ -468,6 +468,10 @@ export class WalletPermissionsManager implements WalletInterface {
   /** Cache recently confirmed permissions to avoid repeated lookups. */
   private permissionCache: Map<string, { expiry: number; cachedAt: number }> = new Map()
   private recentGrants: Map<string, number> = new Map()
+
+  private manifestCache: Map<string, { groupPermissions: GroupedPermissions | null; fetchedAt: number }> = new Map()
+  private manifestFetchInProgress: Map<string, Promise<GroupedPermissions | null>> = new Map()
+  private static readonly MANIFEST_CACHE_TTL_MS = 5 * 60 * 1000
 
   /** How long a cached permission remains valid (5 minutes). */
   private static readonly CACHE_TTL_MS = 5 * 60 * 1000
@@ -734,7 +738,7 @@ export class WalletPermissionsManager implements WalletInterface {
 
     // 2) Reject all matching requests, deleting the entry
     for (const x of matching.pending) {
-      x.reject(new Error('Permission denied.'))
+      x.reject(new Error('PERMISSION DENIED.'))
     }
     this.activeRequests.delete(requestID)
   }
@@ -904,6 +908,9 @@ export class WalletPermissionsManager implements WalletInterface {
     seekPermission?: boolean
     usageType: 'signing' | 'encrypting' | 'hmac' | 'publicKey' | 'identityKey' | 'linkageRevelation' | 'generic'
   }): Promise<boolean> {
+
+    console.log("TEST!!!!!")
+
     const { normalized: normalizedOriginator, lookupValues } = this.prepareOriginator(originator)
     originator = normalizedOriginator
     // 1) adminOriginator can do anything
@@ -1286,6 +1293,186 @@ export class WalletPermissionsManager implements WalletInterface {
     })
   }
 
+  private async fetchManifestGroupPermissions(originator: string): Promise<GroupedPermissions | null> {
+    const cached = this.manifestCache.get(originator)
+    if (cached && Date.now() - cached.fetchedAt < WalletPermissionsManager.MANIFEST_CACHE_TTL_MS) {
+      return cached.groupPermissions
+    }
+
+    const inProgress = this.manifestFetchInProgress.get(originator)
+    if (inProgress) {
+      return inProgress
+    }
+
+    const fetchPromise = (async (): Promise<GroupedPermissions | null> => {
+      try {
+        const proto = originator.startsWith('localhost:') ? 'http' : 'https'
+        const response = await fetch(`${proto}://${originator}/manifest.json`)
+        if (response.ok) {
+          const manifest = await response.json()
+          const groupPermissions: GroupedPermissions | null = manifest?.babbage?.groupPermissions || null
+          this.manifestCache.set(originator, { groupPermissions, fetchedAt: Date.now() })
+          return groupPermissions
+        }
+      } catch (e) {}
+
+      this.manifestCache.set(originator, { groupPermissions: null, fetchedAt: Date.now() })
+      return null
+    })()
+
+    this.manifestFetchInProgress.set(originator, fetchPromise)
+    try {
+      return await fetchPromise
+    } finally {
+      this.manifestFetchInProgress.delete(originator)
+    }
+  }
+
+  private async filterAlreadyGrantedPermissions(
+    originator: string,
+    groupPermissions: GroupedPermissions
+  ): Promise<GroupedPermissions> {
+    const permissionsToRequest: GroupedPermissions = {
+      description: groupPermissions.description,
+      protocolPermissions: [],
+      basketAccess: [],
+      certificateAccess: []
+    }
+
+    if (groupPermissions.spendingAuthorization) {
+      const hasAuth = await this.hasSpendingAuthorization({
+        originator,
+        satoshis: groupPermissions.spendingAuthorization.amount
+      })
+      if (!hasAuth) {
+        permissionsToRequest.spendingAuthorization = groupPermissions.spendingAuthorization
+      }
+    }
+
+    for (const p of groupPermissions.protocolPermissions || []) {
+      const hasPerm = await this.hasProtocolPermission({
+        originator,
+        privileged: false,
+        protocolID: p.protocolID,
+        counterparty: p.counterparty || 'self'
+      })
+      if (!hasPerm) {
+        permissionsToRequest.protocolPermissions!.push(p)
+      }
+    }
+
+    for (const b of groupPermissions.basketAccess || []) {
+      const hasAccess = await this.hasBasketAccess({
+        originator,
+        basket: b.basket
+      })
+      if (!hasAccess) {
+        permissionsToRequest.basketAccess!.push(b)
+      }
+    }
+
+    for (const c of groupPermissions.certificateAccess || []) {
+      const hasAccess = await this.hasCertificateAccess({
+        originator,
+        privileged: false,
+        verifier: c.verifierPublicKey,
+        certType: c.type,
+        fields: c.fields
+      })
+      if (!hasAccess) {
+        permissionsToRequest.certificateAccess!.push(c)
+      }
+    }
+
+    return permissionsToRequest
+  }
+
+  private hasAnyPermissionsToRequest(permissions: GroupedPermissions): boolean {
+    return !!(
+      permissions.spendingAuthorization ||
+      (permissions.protocolPermissions?.length ?? 0) > 0 ||
+      (permissions.basketAccess?.length ?? 0) > 0 ||
+      (permissions.certificateAccess?.length ?? 0) > 0
+    )
+  }
+
+  private async checkSpecificPermissionAfterGroupFlow(request: PermissionRequest): Promise<boolean> {
+    switch (request.type) {
+      case 'protocol':
+        return await this.hasProtocolPermission({
+          originator: request.originator,
+          privileged: request.privileged ?? false,
+          protocolID: request.protocolID!,
+          counterparty: request.counterparty ?? 'self'
+        })
+      case 'basket':
+        return await this.hasBasketAccess({
+          originator: request.originator,
+          basket: request.basket!
+        })
+      case 'certificate':
+        return await this.hasCertificateAccess({
+          originator: request.originator,
+          privileged: request.privileged ?? false,
+          verifier: request.certificate!.verifier,
+          certType: request.certificate!.certType,
+          fields: request.certificate!.fields
+        })
+      case 'spending':
+        return await this.hasSpendingAuthorization({
+          originator: request.originator,
+          satoshis: request.spending!.satoshis
+        })
+      default:
+        return false
+    }
+  }
+
+  private async maybeRequestGroupedPermissions(currentRequest: PermissionRequest): Promise<boolean | null> {
+    if (!this.config.seekGroupedPermission) {
+      return null
+    }
+
+    const originator = currentRequest.originator
+
+    const groupPermissions = await this.fetchManifestGroupPermissions(originator)
+    if (!groupPermissions) {
+      return null
+    }
+
+    const permissionsToRequest = await this.filterAlreadyGrantedPermissions(originator, groupPermissions)
+    if (!this.hasAnyPermissionsToRequest(permissionsToRequest)) {
+      return null
+    }
+
+    const key = `group:${originator}`
+    if (this.activeRequests.has(key)) {
+      await new Promise<boolean>((resolve, reject) => {
+        this.activeRequests.get(key)!.pending.push({ resolve, reject })
+      })
+    } else {
+      await new Promise<boolean>(async (resolve, reject) => {
+        this.activeRequests.set(key, {
+          request: {
+            originator,
+            permissions: permissionsToRequest,
+            displayOriginator: currentRequest.displayOriginator
+          },
+          pending: [{ resolve, reject }]
+        })
+
+        await this.callEvent('onGroupedPermissionRequested', {
+          requestID: key,
+          originator,
+          permissions: permissionsToRequest
+        })
+      })
+    }
+
+    const satisfied = await this.checkSpecificPermissionAfterGroupFlow(currentRequest)
+    return satisfied ? true : null
+  }
+
   /**
    * A central method that triggers the permission request flow.
    * - It checks if there's already an active request for the same key
@@ -1298,8 +1485,14 @@ export class WalletPermissionsManager implements WalletInterface {
     const preparedRequest: PermissionRequest = {
       ...r,
       originator: normalizedOriginator,
-      displayOriginator: r.displayOriginator ?? r.originator
+      displayOriginator: r.displayOriginator ?? r.previousToken?.rawOriginator ?? r.originator
     }
+
+    const groupResult = await this.maybeRequestGroupedPermissions(preparedRequest)
+    if (groupResult !== null) {
+      return groupResult
+    }
+
     const key = this.buildRequestKey(preparedRequest)
 
     // If there's already a queue for the same resource, we piggyback on it
@@ -3354,82 +3547,15 @@ export class WalletPermissionsManager implements WalletInterface {
     if (this.config.seekGroupedPermission && originator) {
       const { normalized: normalizedOriginator } = this.prepareOriginator(originator)
       originator = normalizedOriginator
-      // 1. Fetch manifest.json from the originator
-      let groupPermissions: GroupedPermissions | undefined
-      try {
-        const proto = originator.startsWith('localhost:') ? 'http' : 'https'
-        const response = await fetch(`${proto}://${originator}/manifest.json`)
-        if (response.ok) {
-          const manifest = await response.json()
-          if (manifest?.babbage?.groupPermissions) {
-            groupPermissions = manifest.babbage.groupPermissions
-          }
-        }
-      } catch (e) {
-        // Ignore fetch/parse errors, just proceed without group permissions.
-      }
 
+      // 1. Fetch manifest.json from the originator
+      const groupPermissions = await this.fetchManifestGroupPermissions(originator)
       if (groupPermissions) {
         // 2. Filter out already-granted permissions
-        const permissionsToRequest: GroupedPermissions = {
-          protocolPermissions: [],
-          basketAccess: [],
-          certificateAccess: []
-        }
-
-        if (groupPermissions.spendingAuthorization) {
-          const hasAuth = await this.hasSpendingAuthorization({
-            originator,
-            satoshis: groupPermissions.spendingAuthorization.amount
-          })
-          if (!hasAuth) {
-            permissionsToRequest.spendingAuthorization = groupPermissions.spendingAuthorization
-          }
-        }
-
-        for (const p of groupPermissions.protocolPermissions || []) {
-          const hasPerm = await this.hasProtocolPermission({
-            originator,
-            privileged: false, // Privilege is never allowed here
-            protocolID: p.protocolID,
-            counterparty: p.counterparty || 'self'
-          })
-          if (!hasPerm) {
-            permissionsToRequest.protocolPermissions!.push(p)
-          }
-        }
-
-        for (const b of groupPermissions.basketAccess || []) {
-          const hasAccess = await this.hasBasketAccess({
-            originator,
-            basket: b.basket
-          })
-          if (!hasAccess) {
-            permissionsToRequest.basketAccess!.push(b)
-          }
-        }
-
-        for (const c of groupPermissions.certificateAccess || []) {
-          const hasAccess = await this.hasCertificateAccess({
-            originator,
-            privileged: false, // Privilege is never allowed here for security
-            verifier: c.verifierPublicKey,
-            certType: c.type,
-            fields: c.fields
-          })
-          if (!hasAccess) {
-            permissionsToRequest.certificateAccess!.push(c)
-          }
-        }
+        const permissionsToRequest = await this.filterAlreadyGrantedPermissions(originator, groupPermissions)
 
         // 3. If any permissions are left to request, start the flow
-        const hasRequests =
-          permissionsToRequest.spendingAuthorization ||
-          (permissionsToRequest.protocolPermissions?.length ?? 0) > 0 ||
-          (permissionsToRequest.basketAccess?.length ?? 0) > 0 ||
-          (permissionsToRequest.certificateAccess?.length ?? 0) > 0
-
-        if (hasRequests) {
+        if (this.hasAnyPermissionsToRequest(permissionsToRequest)) {
           const key = `group:${originator}`
           if (this.activeRequests.has(key)) {
             // Another call is already waiting, piggyback on it
