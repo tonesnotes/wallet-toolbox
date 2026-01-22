@@ -738,7 +738,7 @@ export class WalletPermissionsManager implements WalletInterface {
 
     // 2) Reject all matching requests, deleting the entry
     for (const x of matching.pending) {
-      x.reject(new Error('Permission Denied.'))
+      x.reject(new Error('Permission denied.'))
     }
     this.activeRequests.delete(requestID)
   }
@@ -770,9 +770,9 @@ export class WalletPermissionsManager implements WalletInterface {
     // --- Validation: Ensure granted permissions are a subset of what was requested ---
     if (
       params.granted.spendingAuthorization &&
-      !deepEqual(params.granted.spendingAuthorization, requestedPermissions.spendingAuthorization)
+      !requestedPermissions.spendingAuthorization
     ) {
-      throw new Error('Granted spending authorization does not match the original request.')
+      throw new Error('Granted spending authorization was not part of the original request.')
     }
     if (
       params.granted.protocolPermissions?.some(
@@ -879,6 +879,17 @@ export class WalletPermissionsManager implements WalletInterface {
     ;(err as any).code = 'ERR_PERMISSION_DENIED'
     for (const p of matching.pending) {
       p.reject(err)
+    }
+    this.activeRequests.delete(requestID)
+  }
+
+  public async dismissGroupedPermission(requestID: string): Promise<void> {
+    const matching = this.activeRequests.get(requestID)
+    if (!matching) {
+      throw new Error('Request ID not found.')
+    }
+    for (const p of matching.pending) {
+      p.resolve(true)
     }
     this.activeRequests.delete(requestID)
   }
@@ -1425,6 +1436,39 @@ export class WalletPermissionsManager implements WalletInterface {
     }
   }
 
+  private isRequestIncludedInGroupPermissions(request: PermissionRequest, groupPermissions: GroupedPermissions): boolean {
+    switch (request.type) {
+      case 'protocol': {
+        if (request.privileged) return false
+        const pid = request.protocolID
+        if (!pid) return false
+        const cp = request.counterparty ?? 'self'
+        return !!groupPermissions.protocolPermissions?.some(p => deepEqual(p.protocolID, pid) && (p.counterparty ?? 'self') === cp)
+      }
+      case 'basket': {
+        const basket = request.basket
+        if (!basket) return false
+        return !!groupPermissions.basketAccess?.some(b => b.basket === basket)
+      }
+      case 'certificate': {
+        if (request.privileged) return false
+        const cert = request.certificate
+        if (!cert) return false
+        return !!groupPermissions.certificateAccess?.some(c => {
+          const fieldsA = new Set(c.fields || [])
+          const fieldsB = new Set(cert.fields || [])
+          if (fieldsA.size !== fieldsB.size) return false
+          for (const f of fieldsA) if (!fieldsB.has(f)) return false
+          return c.type === cert.certType && c.verifierPublicKey === cert.verifier
+        })
+      }
+      case 'spending':
+        return !!groupPermissions.spendingAuthorization
+      default:
+        return false
+    }
+  }
+
   private async maybeRequestGroupedPermissions(currentRequest: PermissionRequest): Promise<boolean | null> {
     if (!this.config.seekGroupedPermission) {
       return null
@@ -1434,6 +1478,10 @@ export class WalletPermissionsManager implements WalletInterface {
 
     const groupPermissions = await this.fetchManifestGroupPermissions(originator)
     if (!groupPermissions) {
+      return null
+    }
+
+    if (!this.isRequestIncludedInGroupPermissions(currentRequest, groupPermissions)) {
       return null
     }
 
