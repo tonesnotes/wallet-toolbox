@@ -738,7 +738,7 @@ export class WalletPermissionsManager implements WalletInterface {
 
     // 2) Reject all matching requests, deleting the entry
     for (const x of matching.pending) {
-      x.reject(new Error('PERMISSION DENIED.'))
+      x.reject(new Error('Permission Denied.'))
     }
     this.activeRequests.delete(requestID)
   }
@@ -908,9 +908,6 @@ export class WalletPermissionsManager implements WalletInterface {
     seekPermission?: boolean
     usageType: 'signing' | 'encrypting' | 'hmac' | 'publicKey' | 'identityKey' | 'linkageRevelation' | 'generic'
   }): Promise<boolean> {
-
-    console.log("TEST!!!!!")
-
     const { normalized: normalizedOriginator, lookupValues } = this.prepareOriginator(originator)
     originator = normalizedOriginator
     // 1) adminOriginator can do anything
