@@ -500,7 +500,11 @@ export class WalletPermissionsManager implements WalletInterface {
 
   private manifestCache: Map<
     string,
-    { groupPermissions: GroupedPermissions | null; counterpartyPermissions: CounterpartyPermissions | null; fetchedAt: number }
+    {
+      groupPermissions: GroupedPermissions | null
+      counterpartyPermissions: CounterpartyPermissions | null
+      fetchedAt: number
+    }
   > = new Map()
   private manifestFetchInProgress: Map<
     string,
@@ -805,10 +809,7 @@ export class WalletPermissionsManager implements WalletInterface {
     const originLookupValues = this.buildOriginatorLookupValues(displayOriginator, originator)
 
     // --- Validation: Ensure granted permissions are a subset of what was requested ---
-    if (
-      params.granted.spendingAuthorization &&
-      !requestedPermissions.spendingAuthorization
-    ) {
+    if (params.granted.spendingAuthorization && !requestedPermissions.spendingAuthorization) {
       throw new Error('Granted spending authorization was not part of the original request.')
     }
     if (
@@ -1754,7 +1755,9 @@ export class WalletPermissionsManager implements WalletInterface {
       }))
       .filter(p => p.counterparty === counterparty)
 
-    const isCurrentRequestInManifest = manifestLevel2ForThisPeer.some(p => deepEqual(p.protocolID, currentRequest.protocolID!))
+    const isCurrentRequestInManifest = manifestLevel2ForThisPeer.some(p =>
+      deepEqual(p.protocolID, currentRequest.protocolID!)
+    )
     if (!isCurrentRequestInManifest) {
       return null
     }
@@ -1859,7 +1862,10 @@ export class WalletPermissionsManager implements WalletInterface {
     }
   }
 
-  private isRequestIncludedInGroupPermissions(request: PermissionRequest, groupPermissions: GroupedPermissions): boolean {
+  private isRequestIncludedInGroupPermissions(
+    request: PermissionRequest,
+    groupPermissions: GroupedPermissions
+  ): boolean {
     switch (request.type) {
       case 'protocol': {
         if (request.privileged) return false
