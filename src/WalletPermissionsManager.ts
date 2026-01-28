@@ -832,7 +832,8 @@ export class WalletPermissionsManager implements WalletInterface {
     const expiry = params.expiry || 0 // default: never expires
 
     const toCreate: Array<{ request: PermissionRequest; expiry: number; amount?: number }> = []
-    const toRenew: Array<{ oldToken: PermissionToken; request: PermissionRequest; expiry: number; amount?: number }> = []
+    const toRenew: Array<{ oldToken: PermissionToken; request: PermissionRequest; expiry: number; amount?: number }> =
+      []
 
     if (params.granted.spendingAuthorization) {
       toCreate.push({
@@ -848,21 +849,17 @@ export class WalletPermissionsManager implements WalletInterface {
     }
 
     const grantedProtocols = params.granted.protocolPermissions || []
-    const protocolTokens = await this.mapWithConcurrency(
-      grantedProtocols,
-      8,
-      async p => {
-        const token = await this.findProtocolToken(
-          originator,
-          false,
-          p.protocolID,
-          p.counterparty || 'self',
-          true,
-          originLookupValues
-        )
-        return { p, token }
-      }
-    )
+    const protocolTokens = await this.mapWithConcurrency(grantedProtocols, 8, async p => {
+      const token = await this.findProtocolToken(
+        originator,
+        false,
+        p.protocolID,
+        p.counterparty || 'self',
+        true,
+        originLookupValues
+      )
+      return { p, token }
+    })
 
     for (const { p, token } of protocolTokens) {
       const request: PermissionRequest = {
@@ -972,24 +969,21 @@ export class WalletPermissionsManager implements WalletInterface {
     const expiry = params.expiry || 0
 
     const toCreate: Array<{ request: PermissionRequest; expiry: number; amount?: number }> = []
-    const toRenew: Array<{ oldToken: PermissionToken; request: PermissionRequest; expiry: number; amount?: number }> = []
+    const toRenew: Array<{ oldToken: PermissionToken; request: PermissionRequest; expiry: number; amount?: number }> =
+      []
 
     const grantedProtocols = params.granted.protocols || []
-    const protocolTokens = await this.mapWithConcurrency(
-      grantedProtocols,
-      8,
-      async p => {
-        const token = await this.findProtocolToken(
-          originator,
-          false,
-          p.protocolID,
-          counterparty,
-          true,
-          originLookupValues
-        )
-        return { p, token }
-      }
-    )
+    const protocolTokens = await this.mapWithConcurrency(grantedProtocols, 8, async p => {
+      const token = await this.findProtocolToken(
+        originator,
+        false,
+        p.protocolID,
+        counterparty,
+        true,
+        originLookupValues
+      )
+      return { p, token }
+    })
 
     for (const { p, token } of protocolTokens) {
       const request: PermissionRequest = {
@@ -2648,7 +2642,10 @@ export class WalletPermissionsManager implements WalletInterface {
     r: PermissionRequest,
     expiry: number,
     amount?: number
-  ): Promise<{ output: { lockingScript: string; satoshis: number; outputDescription: string; basket: string; tags: string[] }; request: PermissionRequest }> {
+  ): Promise<{
+    output: { lockingScript: string; satoshis: number; outputDescription: string; basket: string; tags: string[] }
+    request: PermissionRequest
+  }> {
     const normalizedOriginator = this.normalizeOriginator(r.originator) || r.originator
     r.originator = normalizedOriginator
     const basketName = BASKET_MAP[r.type]
@@ -2682,7 +2679,9 @@ export class WalletPermissionsManager implements WalletInterface {
   ): Promise<PermissionRequest[]> {
     const CHUNK = 25
     return this.runBestEffortBatches(items, CHUNK, async chunk => {
-      const built = await this.mapWithConcurrency(chunk, 8, c => this.buildPermissionOutput(c.request, c.expiry, c.amount))
+      const built = await this.mapWithConcurrency(chunk, 8, c =>
+        this.buildPermissionOutput(c.request, c.expiry, c.amount)
+      )
       await this.createAction(
         {
           description: `Grant ${built.length} permissions`,
@@ -2700,7 +2699,9 @@ export class WalletPermissionsManager implements WalletInterface {
   ): Promise<PermissionRequest[]> {
     const CHUNK = 15
     return this.runBestEffortBatches(items, CHUNK, async chunk => {
-      const built = await this.mapWithConcurrency(chunk, 8, c => this.buildPermissionOutput(c.request, c.expiry, c.amount))
+      const built = await this.mapWithConcurrency(chunk, 8, c =>
+        this.buildPermissionOutput(c.request, c.expiry, c.amount)
+      )
 
       const inputBeef = new Beef()
       for (const c of chunk) {
@@ -3428,11 +3429,56 @@ export class WalletPermissionsManager implements WalletInterface {
       this.adminOriginator
     )
     const tx = Transaction.fromBEEF(signableTransaction!.tx)
-    const permInputIndex = tx.inputs.findIndex(
-      input =>
-        input.sourceTXID === oldToken.txid &&
-        input.sourceOutputIndex === oldToken.outputIndex
-    )
+
+    const normalizeTxid = (txid?: string) => (txid ?? '').toLowerCase()
+    const reverseHexTxid = (txid: string) => {
+      const hex = normalizeTxid(txid)
+      if (!/^[0-9a-f]{64}$/.test(hex)) return hex
+      const bytes = hex.match(/../g)
+      return bytes ? bytes.reverse().join('') : hex
+    }
+    const matchesOutpointString = (outpoint: string) => {
+      const dot = outpoint.lastIndexOf('.')
+      const colon = outpoint.lastIndexOf(':')
+      const sep = dot > colon ? dot : colon
+      if (sep === -1) return false
+      const txidPart = outpoint.slice(0, sep)
+      const indexPart = outpoint.slice(sep + 1)
+      const vout = Number(indexPart)
+      if (!Number.isFinite(vout)) return false
+      return normalizeTxid(txidPart) === normalizeTxid(oldToken.txid) && vout === oldToken.outputIndex
+    }
+
+    let permInputIndex = tx.inputs.findIndex((input: any) => {
+      const txidCandidate: unknown =
+        input?.sourceTXID ??
+        input?.sourceTxid ??
+        input?.sourceTxId ??
+        input?.prevTxId ??
+        input?.prevTxid ??
+        input?.prevTXID ??
+        input?.txid ??
+        input?.txID
+
+      const voutCandidate: unknown =
+        input?.sourceOutputIndex ?? input?.sourceOutput ?? input?.outputIndex ?? input?.vout ?? input?.prevOutIndex
+
+      if (typeof txidCandidate === 'string' && typeof voutCandidate === 'number') {
+        const cand = normalizeTxid(txidCandidate)
+        const target = normalizeTxid(oldToken.txid)
+        if (cand === target && voutCandidate === oldToken.outputIndex) return true
+        if (cand === reverseHexTxid(oldToken.txid) && voutCandidate === oldToken.outputIndex) return true
+      }
+
+      const outpointCandidate: unknown = input?.outpoint ?? input?.sourceOutpoint ?? input?.prevOutpoint
+      if (typeof outpointCandidate === 'string' && matchesOutpointString(outpointCandidate)) return true
+
+      return false
+    })
+
+    if (permInputIndex === -1 && tx.inputs.length === 1) {
+      permInputIndex = 0
+    }
     if (permInputIndex === -1) {
       throw new Error('Unable to locate permission token input for revocation.')
     }
