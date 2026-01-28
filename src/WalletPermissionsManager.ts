@@ -831,70 +831,80 @@ export class WalletPermissionsManager implements WalletInterface {
 
     const expiry = params.expiry || 0 // default: never expires
 
+    const toCreate: Array<{ request: PermissionRequest; expiry: number; amount?: number }> = []
+    const toRenew: Array<{ oldToken: PermissionToken; request: PermissionRequest; expiry: number; amount?: number }> =
+      []
+
     if (params.granted.spendingAuthorization) {
-      await this.createPermissionOnChain(
-        {
+      toCreate.push({
+        request: {
           type: 'spending',
           originator,
           spending: { satoshis: params.granted.spendingAuthorization.amount },
           reason: params.granted.spendingAuthorization.description
         },
-        0, // No expiry for spending tokens
-        params.granted.spendingAuthorization.amount
-      )
+        expiry: 0,
+        amount: params.granted.spendingAuthorization.amount
+      })
     }
-    for (const p of params.granted.protocolPermissions || []) {
+
+    const grantedProtocols = params.granted.protocolPermissions || []
+    const protocolTokens = await this.mapWithConcurrency(grantedProtocols, 8, async p => {
       const token = await this.findProtocolToken(
         originator,
-        false, // No privileged protocols allowed in groups for added security.
+        false,
         p.protocolID,
         p.counterparty || 'self',
         true,
         originLookupValues
       )
-      if (token) {
-        const request: PermissionRequest = {
-          type: 'protocol',
-          originator,
-          privileged: false, // No privileged protocols allowed in groups for added security.
-          protocolID: p.protocolID,
-          counterparty: p.counterparty || 'self',
-          reason: p.description
-        }
-        await this.renewPermissionOnChain(token, request, expiry)
-        this.markRecentGrant(request)
-      } else {
-        const request: PermissionRequest = {
-          type: 'protocol',
-          originator,
-          privileged: false, // No privileged protocols allowed in groups for added security.
-          protocolID: p.protocolID,
-          counterparty: p.counterparty || 'self',
-          reason: p.description
-        }
-        await this.createPermissionOnChain(request, expiry)
-        this.markRecentGrant(request)
-      }
-    }
-    for (const b of params.granted.basketAccess || []) {
-      const request: PermissionRequest = { type: 'basket', originator, basket: b.basket, reason: b.description }
-      await this.createPermissionOnChain(request, expiry)
-      this.markRecentGrant(request)
-    }
-    for (const c of params.granted.certificateAccess || []) {
+      return { p, token }
+    })
+
+    for (const { p, token } of protocolTokens) {
       const request: PermissionRequest = {
-        type: 'certificate',
+        type: 'protocol',
         originator,
-        privileged: false, // No certificates on the privileged identity are allowed as part of groups.
-        certificate: {
-          verifier: c.verifierPublicKey,
-          certType: c.type,
-          fields: c.fields
-        },
-        reason: c.description
+        privileged: false,
+        protocolID: p.protocolID,
+        counterparty: p.counterparty || 'self',
+        reason: p.description
       }
-      await this.createPermissionOnChain(request, expiry)
-      this.markRecentGrant(request)
+      if (token) {
+        toRenew.push({ oldToken: token, request, expiry })
+      } else {
+        toCreate.push({ request, expiry })
+      }
+    }
+
+    for (const b of params.granted.basketAccess || []) {
+      toCreate.push({
+        request: { type: 'basket', originator, basket: b.basket, reason: b.description },
+        expiry
+      })
+    }
+
+    for (const c of params.granted.certificateAccess || []) {
+      toCreate.push({
+        request: {
+          type: 'certificate',
+          originator,
+          privileged: false,
+          certificate: {
+            verifier: c.verifierPublicKey,
+            certType: c.type,
+            fields: c.fields
+          },
+          reason: c.description
+        },
+        expiry
+      })
+    }
+
+    const created = await this.createPermissionTokensBestEffort(toCreate)
+    const renewed = await this.renewPermissionTokensBestEffort(toRenew)
+    for (const req of [...created, ...renewed]) {
+      this.markRecentGrant(req)
     }
 
     // Resolve all pending promises for this request
@@ -958,7 +968,12 @@ export class WalletPermissionsManager implements WalletInterface {
 
     const expiry = params.expiry || 0
 
-    for (const p of params.granted.protocols || []) {
+    const toCreate: Array<{ request: PermissionRequest; expiry: number; amount?: number }> = []
+    const toRenew: Array<{ oldToken: PermissionToken; request: PermissionRequest; expiry: number; amount?: number }> =
+      []
+
+    const grantedProtocols = params.granted.protocols || []
+    const protocolTokens = await this.mapWithConcurrency(grantedProtocols, 8, async p => {
       const token = await this.findProtocolToken(
         originator,
         false,
@@ -967,32 +982,30 @@ export class WalletPermissionsManager implements WalletInterface {
         true,
         originLookupValues
       )
+      return { p, token }
+    })
+
+    for (const { p, token } of protocolTokens) {
+      const request: PermissionRequest = {
+        type: 'protocol',
+        originator,
+        privileged: false,
+        protocolID: p.protocolID,
+        counterparty,
+        reason: p.description
+      }
       if (token) {
-        const request: PermissionRequest = {
-          type: 'protocol',
-          originator,
-          privileged: false,
-          protocolID: p.protocolID,
-          counterparty,
-          reason: p.description
-        }
-        await this.renewPermissionOnChain(token, request, expiry)
-        this.markRecentGrant(request)
+        toRenew.push({ oldToken: token, request, expiry })
       } else {
-        const request: PermissionRequest = {
-          type: 'protocol',
-          originator,
-          privileged: false,
-          protocolID: p.protocolID,
-          counterparty,
-          reason: p.description
-        }
-        await this.createPermissionOnChain(request, expiry)
-        this.markRecentGrant(request)
+        toCreate.push({ request, expiry })
       }
     }
 
-    this.markPactEstablished(originator, counterparty)
+    const created = await this.createPermissionTokensBestEffort(toCreate)
+    const renewed = await this.renewPermissionTokensBestEffort(toRenew)
+    for (const req of [...created, ...renewed]) {
+      this.markRecentGrant(req)
+    }
 
     for (const p of matching.pending) {
       p.resolve(true)
@@ -2574,11 +2587,176 @@ export class WalletPermissionsManager implements WalletInterface {
           }
         ],
         options: {
-          acceptDelayedBroadcast: false
+          acceptDelayedBroadcast: true
         }
       },
       this.adminOriginator
     )
+  }
+
+  private async mapWithConcurrency<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+    if (!items.length) return []
+    const results: R[] = new Array(items.length)
+    let i = 0
+    const worker = async () => {
+      while (true) {
+        const idx = i++
+        if (idx >= items.length) return
+        results[idx] = await fn(items[idx])
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()))
+    return results
+  }
+
+  private async runBestEffortBatches<T, R>(
+    items: T[],
+    chunkSize: number,
+    runChunk: (chunk: T[]) => Promise<R[]>
+  ): Promise<R[]> {
+    if (!items.length) return []
+    const out: R[] = []
+    for (let i = 0; i < items.length; i += chunkSize) {
+      const chunk = items.slice(i, i + chunkSize)
+      out.push(...(await this.runBestEffortChunk(chunk, runChunk)))
+    }
+    return out
+  }
+
+  private async runBestEffortChunk<T, R>(chunk: T[], runChunk: (chunk: T[]) => Promise<R[]>): Promise<R[]> {
+    try {
+      return await runChunk(chunk)
+    } catch (e) {
+      if (chunk.length <= 1) {
+        console.error('Permission batch failed:', e)
+        return []
+      }
+      const mid = Math.ceil(chunk.length / 2)
+      const left = await this.runBestEffortChunk(chunk.slice(0, mid), runChunk)
+      const right = await this.runBestEffortChunk(chunk.slice(mid), runChunk)
+      return [...left, ...right]
+    }
+  }
+
+  private async buildPermissionOutput(
+    r: PermissionRequest,
+    expiry: number,
+    amount?: number
+  ): Promise<{
+    output: { lockingScript: string; satoshis: number; outputDescription: string; basket: string; tags: string[] }
+    request: PermissionRequest
+  }> {
+    const normalizedOriginator = this.normalizeOriginator(r.originator) || r.originator
+    r.originator = normalizedOriginator
+    const basketName = BASKET_MAP[r.type]
+    if (!basketName) {
+      throw new Error(`Unsupported permission type: ${r.type}`)
+    }
+    const fields: number[][] = await this.buildPushdropFields(r, expiry, amount)
+    const script = await new PushDrop(this.underlying).lock(
+      fields,
+      WalletPermissionsManager.PERM_TOKEN_ENCRYPTION_PROTOCOL,
+      '1',
+      'self',
+      true,
+      true
+    )
+    const tags = this.buildTagsForRequest(r)
+    return {
+      request: r,
+      output: {
+        lockingScript: script.toHex(),
+        satoshis: 1,
+        outputDescription: `${r.type} permission token`,
+        basket: basketName,
+        tags
+      }
+    }
+  }
+
+  private async createPermissionTokensBestEffort(
+    items: Array<{ request: PermissionRequest; expiry: number; amount?: number }>
+  ): Promise<PermissionRequest[]> {
+    const CHUNK = 25
+    return this.runBestEffortBatches(items, CHUNK, async chunk => {
+      const built = await this.mapWithConcurrency(chunk, 8, c =>
+        this.buildPermissionOutput(c.request, c.expiry, c.amount)
+      )
+      await this.createAction(
+        {
+          description: `Grant ${built.length} permissions`,
+          outputs: built.map(b => b.output),
+          options: { acceptDelayedBroadcast: true }
+        },
+        this.adminOriginator
+      )
+      return built.map(b => b.request)
+    })
+  }
+
+  private async renewPermissionTokensBestEffort(
+    items: Array<{ oldToken: PermissionToken; request: PermissionRequest; expiry: number; amount?: number }>
+  ): Promise<PermissionRequest[]> {
+    const CHUNK = 15
+    return this.runBestEffortBatches(items, CHUNK, async chunk => {
+      const built = await this.mapWithConcurrency(chunk, 8, c =>
+        this.buildPermissionOutput(c.request, c.expiry, c.amount)
+      )
+
+      const inputBeef = new Beef()
+      for (const c of chunk) {
+        inputBeef.mergeBeef(Beef.fromBinary(c.oldToken.tx))
+      }
+
+      const { signableTransaction } = await this.createAction(
+        {
+          description: `Renew ${chunk.length} permissions`,
+          inputBEEF: inputBeef.toBinary(),
+          inputs: chunk.map((c, i) => ({
+            outpoint: `${c.oldToken.txid}.${c.oldToken.outputIndex}`,
+            unlockingScriptLength: 73,
+            inputDescription: `Consume old permission token #${i + 1}`
+          })),
+          outputs: built.map(b => b.output),
+          options: {
+            acceptDelayedBroadcast: true,
+            randomizeOutputs: false,
+            signAndProcess: false
+          }
+        },
+        this.adminOriginator
+      )
+
+      if (!signableTransaction?.reference || !signableTransaction.tx) {
+        throw new Error('Failed to create signable transaction')
+      }
+
+      const partialTx = Transaction.fromAtomicBEEF(signableTransaction.tx)
+      const pushdrop = new PushDrop(this.underlying)
+      const spends: Record<number, { unlockingScript: string }> = {}
+
+      for (let i = 0; i < chunk.length; i++) {
+        const token = chunk[i].oldToken
+        const unlocker = pushdrop.unlock(
+          WalletPermissionsManager.PERM_TOKEN_ENCRYPTION_PROTOCOL,
+          '1',
+          'self',
+          'all',
+          false,
+          1,
+          LockingScript.fromHex(token.outputScript)
+        )
+        const unlockingScript = await unlocker.sign(partialTx, i)
+        spends[i] = { unlockingScript: unlockingScript.toHex() }
+      }
+
+      const { txid } = await this.underlying.signAction({
+        reference: signableTransaction.reference,
+        spends
+      })
+      if (!txid) throw new Error('Failed to finalize renewal transaction')
+      return built.map(b => b.request)
+    })
   }
 
   private async coalescePermissionTokens(
@@ -2618,7 +2796,7 @@ export class WalletPermissionsManager implements WalletInterface {
           }
         ],
         options: {
-          acceptDelayedBroadcast: false,
+          acceptDelayedBroadcast: true,
           randomizeOutputs: false,
           signAndProcess: false
         }
@@ -2730,7 +2908,7 @@ export class WalletPermissionsManager implements WalletInterface {
             }
           ],
           options: {
-            acceptDelayedBroadcast: false
+            acceptDelayedBroadcast: true
           }
         },
         this.adminOriginator
@@ -2898,7 +3076,7 @@ export class WalletPermissionsManager implements WalletInterface {
           tags,
           tagQueryMode: 'all',
           include: 'entire transactions',
-          limit: 100
+          limit: 10000
         },
         this.adminOriginator
       )
@@ -3245,12 +3423,65 @@ export class WalletPermissionsManager implements WalletInterface {
           }
         ],
         options: {
-          acceptDelayedBroadcast: false
+          acceptDelayedBroadcast: true
         }
       },
       this.adminOriginator
     )
     const tx = Transaction.fromBEEF(signableTransaction!.tx)
+
+    const normalizeTxid = (txid?: string) => (txid ?? '').toLowerCase()
+    const reverseHexTxid = (txid: string) => {
+      const hex = normalizeTxid(txid)
+      if (!/^[0-9a-f]{64}$/.test(hex)) return hex
+      const bytes = hex.match(/../g)
+      return bytes ? bytes.reverse().join('') : hex
+    }
+    const matchesOutpointString = (outpoint: string) => {
+      const dot = outpoint.lastIndexOf('.')
+      const colon = outpoint.lastIndexOf(':')
+      const sep = dot > colon ? dot : colon
+      if (sep === -1) return false
+      const txidPart = outpoint.slice(0, sep)
+      const indexPart = outpoint.slice(sep + 1)
+      const vout = Number(indexPart)
+      if (!Number.isFinite(vout)) return false
+      return normalizeTxid(txidPart) === normalizeTxid(oldToken.txid) && vout === oldToken.outputIndex
+    }
+
+    let permInputIndex = tx.inputs.findIndex((input: any) => {
+      const txidCandidate: unknown =
+        input?.sourceTXID ??
+        input?.sourceTxid ??
+        input?.sourceTxId ??
+        input?.prevTxId ??
+        input?.prevTxid ??
+        input?.prevTXID ??
+        input?.txid ??
+        input?.txID
+
+      const voutCandidate: unknown =
+        input?.sourceOutputIndex ?? input?.sourceOutput ?? input?.outputIndex ?? input?.vout ?? input?.prevOutIndex
+
+      if (typeof txidCandidate === 'string' && typeof voutCandidate === 'number') {
+        const cand = normalizeTxid(txidCandidate)
+        const target = normalizeTxid(oldToken.txid)
+        if (cand === target && voutCandidate === oldToken.outputIndex) return true
+        if (cand === reverseHexTxid(oldToken.txid) && voutCandidate === oldToken.outputIndex) return true
+      }
+
+      const outpointCandidate: unknown = input?.outpoint ?? input?.sourceOutpoint ?? input?.prevOutpoint
+      if (typeof outpointCandidate === 'string' && matchesOutpointString(outpointCandidate)) return true
+
+      return false
+    })
+
+    if (permInputIndex === -1 && tx.inputs.length === 1) {
+      permInputIndex = 0
+    }
+    if (permInputIndex === -1) {
+      throw new Error('Unable to locate permission token input for revocation.')
+    }
     const unlocker = new PushDrop(this.underlying).unlock(
       WalletPermissionsManager.PERM_TOKEN_ENCRYPTION_PROTOCOL,
       '1',
@@ -3260,11 +3491,11 @@ export class WalletPermissionsManager implements WalletInterface {
       1,
       LockingScript.fromHex(oldToken.outputScript)
     )
-    const unlockingScript = await unlocker.sign(tx, 0)
+    const unlockingScript = await unlocker.sign(tx, permInputIndex)
     await this.underlying.signAction({
       reference: signableTransaction!.reference,
       spends: {
-        0: {
+        [permInputIndex]: {
           unlockingScript: unlockingScript.toHex()
         }
       }
