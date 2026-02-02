@@ -14,6 +14,134 @@ describe('WalletPermissionsManager - Permission Module Support', () => {
     underlying = mockUnderlyingWallet()
   })
 
+  describe('P-Label Delegation', () => {
+    it('should delegate listActions through P-label modules in order and return responses in reverse order', async () => {
+      const callOrder: string[] = []
+
+      const module1: PermissionsModule = {
+        onRequest: jest.fn(async req => {
+          callOrder.push('req1')
+          expect((req.args as any).req1Processed).toBeUndefined()
+          return { ...req, args: { ...(req.args as any), req1Processed: true } }
+        }),
+        onResponse: jest.fn(async res => {
+          callOrder.push('res1')
+          expect((res as any).processedBy).toBe('module2')
+          return { ...res, finalProcessedBy: 'module1' }
+        })
+      }
+
+      const module2: PermissionsModule = {
+        onRequest: jest.fn(async req => {
+          callOrder.push('req2')
+          expect((req.args as any).req1Processed).toBe(true)
+          return { ...req, args: { ...(req.args as any), req2Processed: true } }
+        }),
+        onResponse: jest.fn(async res => {
+          callOrder.push('res2')
+          expect((res as any).processedBy).toBeUndefined()
+          return { ...res, processedBy: 'module2' }
+        })
+      }
+
+      const config: PermissionsManagerConfig = {
+        permissionModules: {
+          scheme1: module1,
+          scheme2: module2
+        },
+        seekPermissionWhenListingActionsByLabel: false
+      }
+
+      const manager = new WalletPermissionsManager(underlying, 'customToken.domain.com', config)
+
+      underlying.listActions.mockResolvedValue({ totalActions: 0, actions: [] })
+
+      const result = await manager.listActions(
+        {
+          labels: ['p scheme1 alpha', 'p scheme2 beta', 'regular-label']
+        },
+        'app.com'
+      )
+
+      expect(module1.onRequest).toHaveBeenCalledTimes(1)
+      expect(module2.onRequest).toHaveBeenCalledTimes(1)
+      expect(module1.onResponse).toHaveBeenCalledTimes(1)
+      expect(module2.onResponse).toHaveBeenCalledTimes(1)
+      expect(callOrder).toEqual(['req1', 'req2', 'res2', 'res1'])
+      expect((result as any).finalProcessedBy).toBe('module1')
+    })
+
+    it('should delegate createAction when a P-label is present', async () => {
+      const testModule: PermissionsModule = {
+        onRequest: jest.fn(async req => req),
+        onResponse: jest.fn(async res => res)
+      }
+
+      const config: PermissionsManagerConfig = {
+        permissionModules: {
+          labels: testModule
+        },
+        seekSpendingPermissions: false,
+        seekBasketInsertionPermissions: false,
+        seekPermissionWhenApplyingActionLabels: false
+      }
+
+      const manager = new WalletPermissionsManager(underlying, 'customToken.domain.com', config)
+
+      underlying.createAction.mockResolvedValue({ txid: 'abc123', tx: [] })
+
+      await manager.createAction(
+        {
+          description: 'Label-based createAction',
+          labels: ['p labels token', 'regular-label'],
+          outputs: [
+            {
+              lockingScript: 'abcd',
+              satoshis: 1000,
+              basket: 'regular-basket',
+              outputDescription: 'Test output'
+            }
+          ]
+        },
+        'app.com'
+      )
+
+      expect(testModule.onRequest).toHaveBeenCalledTimes(1)
+      expect(testModule.onResponse).toHaveBeenCalledTimes(1)
+    })
+
+    it('should delegate internalizeAction when a P-label is present', async () => {
+      const testModule: PermissionsModule = {
+        onRequest: jest.fn(async req => req),
+        onResponse: jest.fn(async res => res)
+      }
+
+      const config: PermissionsManagerConfig = {
+        permissionModules: {
+          labels: testModule
+        },
+        seekPermissionWhenApplyingActionLabels: false
+      }
+
+      const manager = new WalletPermissionsManager(underlying, 'customToken.domain.com', config)
+
+      underlying.internalizeAction.mockResolvedValue({ accepted: true })
+
+      await manager.internalizeAction(
+        {
+          tx: [],
+          description: 'Internalize with label',
+          labels: ['p labels internal', 'regular-label'],
+          outputs: []
+        } as any,
+        'app.com'
+      )
+
+      expect(testModule.onRequest).toHaveBeenCalledTimes(1)
+      expect(testModule.onResponse).toHaveBeenCalledTimes(1)
+    })
+  })
+
   afterEach(() => {
     jest.clearAllMocks()
   })
@@ -658,6 +786,16 @@ describe('WalletPermissionsManager - Permission Module Support', () => {
   })
 
   describe('P-Module Error Handling', () => {
+    it('should throw if P-label scheme is unsupported', async () => {
+      const manager = new WalletPermissionsManager(underlying, 'customToken.domain.com', {})
+
+      await expect(
+        manager.listActions({ labels: ['p unknown scheme', 'regular-label'] }, 'app.com')
+      ).rejects.toThrow('Unsupported P-label scheme: p unknown')
+
+      expect(underlying.listActions).not.toHaveBeenCalled()
+    })
+
     it('should throw if P-module onRequest throws', async () => {
       const testModule: PermissionsModule = {
         onRequest: jest.fn(async () => {
