@@ -480,15 +480,15 @@ export class WalletPermissionsManager implements WalletInterface {
     string,
     {
       request:
-        | PermissionRequest
-        | { originator: string; permissions: GroupedPermissions; displayOriginator?: string }
-        | {
-            originator: string
-            counterparty: PubKeyHex
-            permissions: CounterpartyPermissions
-            displayOriginator?: string
-            counterpartyLabel?: string
-          }
+      | PermissionRequest
+      | { originator: string; permissions: GroupedPermissions; displayOriginator?: string }
+      | {
+        originator: string
+        counterparty: PubKeyHex
+        permissions: CounterpartyPermissions
+        displayOriginator?: string
+        counterpartyLabel?: string
+      }
       pending: Array<{
         resolve: (val: any) => void
         reject: (err: any) => void
@@ -913,118 +913,128 @@ export class WalletPermissionsManager implements WalletInterface {
       throw new Error('Request ID not found.')
     }
 
-    const originalRequest = matching.request as {
-      originator: string
-      permissions: GroupedPermissions
-      displayOriginator?: string
-    }
-    const { originator, permissions: requestedPermissions, displayOriginator } = originalRequest
-    const originLookupValues = this.buildOriginatorLookupValues(displayOriginator, originator)
+    try {
+      const originalRequest = matching.request as {
+        originator: string
+        permissions: GroupedPermissions
+        displayOriginator?: string
+      }
+      const { originator, permissions: requestedPermissions, displayOriginator } = originalRequest
+      const originLookupValues = this.buildOriginatorLookupValues(displayOriginator, originator)
 
-    // --- Validation: Ensure granted permissions are a subset of what was requested ---
-    if (params.granted.spendingAuthorization && !requestedPermissions.spendingAuthorization) {
-      throw new Error('Granted spending authorization was not part of the original request.')
-    }
-    if (
-      params.granted.protocolPermissions?.some(
-        g => !requestedPermissions.protocolPermissions?.find(r => deepEqual(r, g))
-      )
-    ) {
-      throw new Error('Granted protocol permissions are not a subset of the original request.')
-    }
-    if (params.granted.basketAccess?.some(g => !requestedPermissions.basketAccess?.find(r => deepEqual(r, g)))) {
-      throw new Error('Granted basket access permissions are not a subset of the original request.')
-    }
-    if (
-      params.granted.certificateAccess?.some(g => !requestedPermissions.certificateAccess?.find(r => deepEqual(r, g)))
-    ) {
-      throw new Error('Granted certificate access permissions are not a subset of the original request.')
-    }
-    // --- End Validation ---
+      // --- Validation: Ensure granted permissions are a subset of what was requested ---
+      if (params.granted.spendingAuthorization && !requestedPermissions.spendingAuthorization) {
+        throw new Error('Granted spending authorization was not part of the original request.')
+      }
+      if (
+        params.granted.protocolPermissions?.some(
+          g => !requestedPermissions.protocolPermissions?.find(r => deepEqual(r, g))
+        )
+      ) {
+        throw new Error('Granted protocol permissions are not a subset of the original request.')
+      }
+      if (params.granted.basketAccess?.some(g => !requestedPermissions.basketAccess?.find(r => deepEqual(r, g)))) {
+        throw new Error('Granted basket access permissions are not a subset of the original request.')
+      }
+      if (
+        params.granted.certificateAccess?.some(g => !requestedPermissions.certificateAccess?.find(r => deepEqual(r, g)))
+      ) {
+        throw new Error('Granted certificate access permissions are not a subset of the original request.')
+      }
+      // --- End Validation ---
 
-    const expiry = params.expiry || 0 // default: never expires
+      const expiry = params.expiry || 0 // default: never expires
 
-    const toCreate: Array<{ request: PermissionRequest; expiry: number; amount?: number }> = []
-    const toRenew: Array<{ oldToken: PermissionToken; request: PermissionRequest; expiry: number; amount?: number }> =
-      []
+      const toCreate: Array<{ request: PermissionRequest; expiry: number; amount?: number }> = []
+      const toRenew: Array<{ oldToken: PermissionToken; request: PermissionRequest; expiry: number; amount?: number }> =
+        []
 
-    if (params.granted.spendingAuthorization) {
-      toCreate.push({
-        request: {
-          type: 'spending',
+      if (params.granted.spendingAuthorization) {
+        toCreate.push({
+          request: {
+            type: 'spending',
+            originator,
+            spending: { satoshis: params.granted.spendingAuthorization.amount },
+            reason: params.granted.spendingAuthorization.description
+          },
+          expiry: 0,
+          amount: params.granted.spendingAuthorization.amount
+        })
+      }
+
+      const grantedProtocols = params.granted.protocolPermissions || []
+      const protocolTokens = await this.mapWithConcurrency(grantedProtocols, 8, async p => {
+        const token = await this.findProtocolToken(
           originator,
-          spending: { satoshis: params.granted.spendingAuthorization.amount },
-          reason: params.granted.spendingAuthorization.description
-        },
-        expiry: 0,
-        amount: params.granted.spendingAuthorization.amount
+          false,
+          p.protocolID,
+          p.counterparty || 'self',
+          true,
+          originLookupValues
+        )
+        return { p, token }
       })
-    }
 
-    const grantedProtocols = params.granted.protocolPermissions || []
-    const protocolTokens = await this.mapWithConcurrency(grantedProtocols, 8, async p => {
-      const token = await this.findProtocolToken(
-        originator,
-        false,
-        p.protocolID,
-        p.counterparty || 'self',
-        true,
-        originLookupValues
-      )
-      return { p, token }
-    })
-
-    for (const { p, token } of protocolTokens) {
-      const request: PermissionRequest = {
-        type: 'protocol',
-        originator,
-        privileged: false,
-        protocolID: p.protocolID,
-        counterparty: p.counterparty || 'self',
-        reason: p.description
-      }
-      if (token) {
-        toRenew.push({ oldToken: token, request, expiry })
-      } else {
-        toCreate.push({ request, expiry })
-      }
-    }
-
-    for (const b of params.granted.basketAccess || []) {
-      toCreate.push({
-        request: { type: 'basket', originator, basket: b.basket, reason: b.description },
-        expiry
-      })
-    }
-
-    for (const c of params.granted.certificateAccess || []) {
-      toCreate.push({
-        request: {
-          type: 'certificate',
+      for (const { p, token } of protocolTokens) {
+        const request: PermissionRequest = {
+          type: 'protocol',
           originator,
           privileged: false,
-          certificate: {
-            verifier: c.verifierPublicKey,
-            certType: c.type,
-            fields: c.fields
+          protocolID: p.protocolID,
+          counterparty: p.counterparty || 'self',
+          reason: p.description
+        }
+        if (token) {
+          toRenew.push({ oldToken: token, request, expiry })
+        } else {
+          toCreate.push({ request, expiry })
+        }
+      }
+
+      for (const b of params.granted.basketAccess || []) {
+        toCreate.push({
+          request: { type: 'basket', originator, basket: b.basket, reason: b.description },
+          expiry
+        })
+      }
+
+      for (const c of params.granted.certificateAccess || []) {
+        toCreate.push({
+          request: {
+            type: 'certificate',
+            originator,
+            privileged: false,
+            certificate: {
+              verifier: c.verifierPublicKey,
+              certType: c.type,
+              fields: c.fields
+            },
+            reason: c.description
           },
-          reason: c.description
-        },
-        expiry
-      })
-    }
+          expiry
+        })
+      }
 
-    const created = await this.createPermissionTokensBestEffort(toCreate)
-    const renewed = await this.renewPermissionTokensBestEffort(toRenew)
-    for (const req of [...created, ...renewed]) {
-      this.markRecentGrant(req)
-    }
+      const created = await this.createPermissionTokensBestEffort(toCreate)
+      const renewed = await this.renewPermissionTokensBestEffort(toRenew)
+      for (const req of [...created, ...renewed]) {
+        this.markRecentGrant(req)
+      }
 
-    // Resolve all pending promises for this request
-    for (const p of matching.pending) {
-      p.resolve(true)
+      // Success - resolve all pending promises for this request
+      for (const p of matching.pending) {
+        p.resolve(true)
+      }
+    } catch (error) {
+      // Failure - reject all pending promises so callers don't hang forever
+      for (const p of matching.pending) {
+        p.reject(error)
+      }
+      throw error
+    } finally {
+      // Always clean up the request entry
+      this.activeRequests.delete(params.requestID)
     }
-    this.activeRequests.delete(params.requestID)
   }
 
   /**
@@ -1037,7 +1047,7 @@ export class WalletPermissionsManager implements WalletInterface {
       throw new Error('Request ID not found.')
     }
     const err = new Error('The user has denied the request for permission.')
-    ;(err as any).code = 'ERR_PERMISSION_DENIED'
+      ; (err as any).code = 'ERR_PERMISSION_DENIED'
     for (const p of matching.pending) {
       p.reject(err)
     }
@@ -1132,7 +1142,7 @@ export class WalletPermissionsManager implements WalletInterface {
       throw new Error('Request ID not found.')
     }
     const err = new Error('The user has denied the request for permission.')
-    ;(err as any).code = 'ERR_PERMISSION_DENIED'
+      ; (err as any).code = 'ERR_PERMISSION_DENIED'
     for (const p of matching.pending) {
       p.reject(err)
     }
@@ -1599,7 +1609,7 @@ export class WalletPermissionsManager implements WalletInterface {
           this.manifestCache.set(originator, { groupPermissions, counterpartyPermissions, fetchedAt: Date.now() })
           return { groupPermissions, counterpartyPermissions }
         }
-      } catch (e) {}
+      } catch (e) { }
 
       const result = { groupPermissions: null, counterpartyPermissions: null }
       this.manifestCache.set(originator, { ...result, fetchedAt: Date.now() })
