@@ -20,7 +20,9 @@ import {
   RelinquishOutputArgs,
   GetPublicKeyArgs,
   CreateActionArgs,
-  ListOutputsResult
+  ListOutputsResult,
+  ListActionsArgs,
+  ListActionsResult
 } from '@bsv/sdk'
 
 ////// TODO: ADD SUPPORT FOR ADMIN COUNTERPARTIES BASED ON WALLET STORAGE
@@ -619,6 +621,80 @@ export class WalletPermissionsManager implements WalletInterface {
   }
 
   /**
+   * Adds a permission module for the given schemeID if needed, throwing if unsupported.
+   */
+  private addPModuleByScheme(
+    schemeID: string,
+    kind: 'label' | 'basket',
+    pModulesByScheme: Map<string, PermissionsModule>
+  ): void {
+    if (pModulesByScheme.has(schemeID)) return
+    const module = this.config.permissionModules?.[schemeID]
+    if (!module) {
+      throw new Error(`Unsupported P-${kind} scheme: p ${schemeID}`)
+    }
+    pModulesByScheme.set(schemeID, module)
+  }
+
+  /**
+   * Splits labels into P and non-P lists, registering any P-modules encountered.
+   *
+   * P-labels follow BRC-111 format: `p <moduleId> <payload>`
+   * - Must start with "p " (lowercase p + space)
+   * - Module ID must be at least 1 character with no spaces
+   * - Single space separates module ID from payload
+   * - Payload must be at least 1 character
+   *
+   * @example Valid: "p btms token123", "p invoicing invoice 2026-02-02"
+   * @example Invalid: "p btms" (no payload), "p btms " (empty payload), "p  data" (empty moduleId)
+   *
+   * @param labels - Array of label strings to process
+   * @param pModulesByScheme - Map to populate with discovered p-modules
+   * @returns Array of non-P labels for normal permission checks
+   * @throws Error if p-label format is invalid or module is unsupported
+   */
+  private splitLabelsByPermissionModule(
+    labels: string[] | undefined,
+    pModulesByScheme: Map<string, PermissionsModule>
+  ): string[] {
+    const nonPLabels: string[] = []
+    if (!labels) return nonPLabels
+
+    for (const label of labels) {
+      if (label.startsWith('p ')) {
+        // Remove "p " prefix to get "moduleId payload"
+        const remainder = label.slice(2)
+
+        // Find the space that separates moduleId from payload
+        const separatorIndex = remainder.indexOf(' ')
+
+        // Validate: must have a space (separatorIndex > 0) and payload after it
+        // separatorIndex <= 0 means no space found or moduleId is empty
+        // separatorIndex === remainder.length - 1 means space is last char (no payload)
+        if (separatorIndex <= 0 || separatorIndex === remainder.length - 1) {
+          throw new Error(`Invalid P-label format: ${label}`)
+        }
+
+        // Reject double spaces after moduleId (payload can't start with space)
+        if (remainder[separatorIndex + 1] === ' ') {
+          throw new Error(`Invalid P-label format: ${label}`)
+        }
+
+        // Extract moduleId (substring before first space)
+        const schemeID = remainder.slice(0, separatorIndex)
+
+        // Register the module (throws if unsupported)
+        this.addPModuleByScheme(schemeID, 'label', pModulesByScheme)
+      } else {
+        // Regular label - add to list for normal permission checks
+        nonPLabels.push(label)
+      }
+    }
+
+    return nonPLabels
+  }
+
+  /**
    * Decrypts custom instructions in listOutputs results if encryption is configured.
    */
   private async decryptListOutputsMetadata(results: ListOutputsResult): Promise<ListOutputsResult> {
@@ -628,6 +704,43 @@ export class WalletPermissionsManager implements WalletInterface {
           results.outputs[i].customInstructions = await this.maybeDecryptMetadata(
             results.outputs[i].customInstructions!
           )
+        }
+      }
+    }
+    return results
+  }
+
+  /**
+   * Decrypts metadata in listActions results if encryption is configured.
+   */
+  private async decryptListActionsMetadata(results: ListActionsResult): Promise<ListActionsResult> {
+    if (results.actions) {
+      for (let i = 0; i < results.actions.length; i++) {
+        if (results.actions[i].description) {
+          results.actions[i].description = await this.maybeDecryptMetadata(results.actions[i].description)
+        }
+        if (results.actions[i].inputs) {
+          for (let j = 0; j < results.actions[i].inputs!.length; j++) {
+            if (results.actions[i].inputs![j].inputDescription) {
+              results.actions[i].inputs![j].inputDescription = await this.maybeDecryptMetadata(
+                results.actions[i].inputs![j].inputDescription
+              )
+            }
+          }
+        }
+        if (results.actions[i].outputs) {
+          for (let j = 0; j < results.actions[i].outputs!.length; j++) {
+            if (results.actions[i].outputs![j].outputDescription) {
+              results.actions[i].outputs![j].outputDescription = await this.maybeDecryptMetadata(
+                results.actions[i].outputs![j].outputDescription
+              )
+            }
+            if (results.actions[i].outputs![j].customInstructions) {
+              results.actions[i].outputs![j].customInstructions = await this.maybeDecryptMetadata(
+                results.actions[i].outputs![j].customInstructions!
+              )
+            }
+          }
         }
       }
     }
@@ -800,118 +913,128 @@ export class WalletPermissionsManager implements WalletInterface {
       throw new Error('Request ID not found.')
     }
 
-    const originalRequest = matching.request as {
-      originator: string
-      permissions: GroupedPermissions
-      displayOriginator?: string
-    }
-    const { originator, permissions: requestedPermissions, displayOriginator } = originalRequest
-    const originLookupValues = this.buildOriginatorLookupValues(displayOriginator, originator)
+    try {
+      const originalRequest = matching.request as {
+        originator: string
+        permissions: GroupedPermissions
+        displayOriginator?: string
+      }
+      const { originator, permissions: requestedPermissions, displayOriginator } = originalRequest
+      const originLookupValues = this.buildOriginatorLookupValues(displayOriginator, originator)
 
-    // --- Validation: Ensure granted permissions are a subset of what was requested ---
-    if (params.granted.spendingAuthorization && !requestedPermissions.spendingAuthorization) {
-      throw new Error('Granted spending authorization was not part of the original request.')
-    }
-    if (
-      params.granted.protocolPermissions?.some(
-        g => !requestedPermissions.protocolPermissions?.find(r => deepEqual(r, g))
-      )
-    ) {
-      throw new Error('Granted protocol permissions are not a subset of the original request.')
-    }
-    if (params.granted.basketAccess?.some(g => !requestedPermissions.basketAccess?.find(r => deepEqual(r, g)))) {
-      throw new Error('Granted basket access permissions are not a subset of the original request.')
-    }
-    if (
-      params.granted.certificateAccess?.some(g => !requestedPermissions.certificateAccess?.find(r => deepEqual(r, g)))
-    ) {
-      throw new Error('Granted certificate access permissions are not a subset of the original request.')
-    }
-    // --- End Validation ---
+      // --- Validation: Ensure granted permissions are a subset of what was requested ---
+      if (params.granted.spendingAuthorization && !requestedPermissions.spendingAuthorization) {
+        throw new Error('Granted spending authorization was not part of the original request.')
+      }
+      if (
+        params.granted.protocolPermissions?.some(
+          g => !requestedPermissions.protocolPermissions?.find(r => deepEqual(r, g))
+        )
+      ) {
+        throw new Error('Granted protocol permissions are not a subset of the original request.')
+      }
+      if (params.granted.basketAccess?.some(g => !requestedPermissions.basketAccess?.find(r => deepEqual(r, g)))) {
+        throw new Error('Granted basket access permissions are not a subset of the original request.')
+      }
+      if (
+        params.granted.certificateAccess?.some(g => !requestedPermissions.certificateAccess?.find(r => deepEqual(r, g)))
+      ) {
+        throw new Error('Granted certificate access permissions are not a subset of the original request.')
+      }
+      // --- End Validation ---
 
-    const expiry = params.expiry || 0 // default: never expires
+      const expiry = params.expiry || 0 // default: never expires
 
-    const toCreate: Array<{ request: PermissionRequest; expiry: number; amount?: number }> = []
-    const toRenew: Array<{ oldToken: PermissionToken; request: PermissionRequest; expiry: number; amount?: number }> =
-      []
+      const toCreate: Array<{ request: PermissionRequest; expiry: number; amount?: number }> = []
+      const toRenew: Array<{ oldToken: PermissionToken; request: PermissionRequest; expiry: number; amount?: number }> =
+        []
 
-    if (params.granted.spendingAuthorization) {
-      toCreate.push({
-        request: {
-          type: 'spending',
+      if (params.granted.spendingAuthorization) {
+        toCreate.push({
+          request: {
+            type: 'spending',
+            originator,
+            spending: { satoshis: params.granted.spendingAuthorization.amount },
+            reason: params.granted.spendingAuthorization.description
+          },
+          expiry: 0,
+          amount: params.granted.spendingAuthorization.amount
+        })
+      }
+
+      const grantedProtocols = params.granted.protocolPermissions || []
+      const protocolTokens = await this.mapWithConcurrency(grantedProtocols, 8, async p => {
+        const token = await this.findProtocolToken(
           originator,
-          spending: { satoshis: params.granted.spendingAuthorization.amount },
-          reason: params.granted.spendingAuthorization.description
-        },
-        expiry: 0,
-        amount: params.granted.spendingAuthorization.amount
+          false,
+          p.protocolID,
+          p.counterparty || 'self',
+          true,
+          originLookupValues
+        )
+        return { p, token }
       })
-    }
 
-    const grantedProtocols = params.granted.protocolPermissions || []
-    const protocolTokens = await this.mapWithConcurrency(grantedProtocols, 8, async p => {
-      const token = await this.findProtocolToken(
-        originator,
-        false,
-        p.protocolID,
-        p.counterparty || 'self',
-        true,
-        originLookupValues
-      )
-      return { p, token }
-    })
-
-    for (const { p, token } of protocolTokens) {
-      const request: PermissionRequest = {
-        type: 'protocol',
-        originator,
-        privileged: false,
-        protocolID: p.protocolID,
-        counterparty: p.counterparty || 'self',
-        reason: p.description
-      }
-      if (token) {
-        toRenew.push({ oldToken: token, request, expiry })
-      } else {
-        toCreate.push({ request, expiry })
-      }
-    }
-
-    for (const b of params.granted.basketAccess || []) {
-      toCreate.push({
-        request: { type: 'basket', originator, basket: b.basket, reason: b.description },
-        expiry
-      })
-    }
-
-    for (const c of params.granted.certificateAccess || []) {
-      toCreate.push({
-        request: {
-          type: 'certificate',
+      for (const { p, token } of protocolTokens) {
+        const request: PermissionRequest = {
+          type: 'protocol',
           originator,
           privileged: false,
-          certificate: {
-            verifier: c.verifierPublicKey,
-            certType: c.type,
-            fields: c.fields
+          protocolID: p.protocolID,
+          counterparty: p.counterparty || 'self',
+          reason: p.description
+        }
+        if (token) {
+          toRenew.push({ oldToken: token, request, expiry })
+        } else {
+          toCreate.push({ request, expiry })
+        }
+      }
+
+      for (const b of params.granted.basketAccess || []) {
+        toCreate.push({
+          request: { type: 'basket', originator, basket: b.basket, reason: b.description },
+          expiry
+        })
+      }
+
+      for (const c of params.granted.certificateAccess || []) {
+        toCreate.push({
+          request: {
+            type: 'certificate',
+            originator,
+            privileged: false,
+            certificate: {
+              verifier: c.verifierPublicKey,
+              certType: c.type,
+              fields: c.fields
+            },
+            reason: c.description
           },
-          reason: c.description
-        },
-        expiry
-      })
-    }
+          expiry
+        })
+      }
 
-    const created = await this.createPermissionTokensBestEffort(toCreate)
-    const renewed = await this.renewPermissionTokensBestEffort(toRenew)
-    for (const req of [...created, ...renewed]) {
-      this.markRecentGrant(req)
-    }
+      const created = await this.createPermissionTokensBestEffort(toCreate)
+      const renewed = await this.renewPermissionTokensBestEffort(toRenew)
+      for (const req of [...created, ...renewed]) {
+        this.markRecentGrant(req)
+      }
 
-    // Resolve all pending promises for this request
-    for (const p of matching.pending) {
-      p.resolve(true)
+      // Success - resolve all pending promises for this request
+      for (const p of matching.pending) {
+        p.resolve(true)
+      }
+    } catch (error) {
+      // Failure - reject all pending promises so callers don't hang forever
+      for (const p of matching.pending) {
+        p.reject(error)
+      }
+      throw error
+    } finally {
+      // Always clean up the request entry
+      this.activeRequests.delete(params.requestID)
     }
-    this.activeRequests.delete(params.requestID)
   }
 
   /**
@@ -3510,22 +3633,17 @@ export class WalletPermissionsManager implements WalletInterface {
     args: Parameters<WalletInterface['createAction']>[0],
     originator?: string
   ): ReturnType<WalletInterface['createAction']> {
-    // 1) Identify unique P-modules involved (one per schemeID)
+    // 1) Identify unique P-modules involved (one per schemeID) from both baskets and labels
     const pModulesByScheme = new Map<string, PermissionsModule>()
     const nonPBaskets: string[] = []
 
+    // Check baskets for p modules
     if (args.outputs) {
       for (const out of args.outputs) {
         if (out.basket) {
           if (out.basket.startsWith('p ')) {
             const schemeID = out.basket.split(' ')[1]
-            if (!pModulesByScheme.has(schemeID)) {
-              const module = this.config.permissionModules?.[schemeID]
-              if (!module) {
-                throw new Error(`Unsupported P-basket scheme: p ${schemeID}`)
-              }
-              pModulesByScheme.set(schemeID, module)
-            }
+            this.addPModuleByScheme(schemeID, 'basket', pModulesByScheme)
           } else {
             // Track non-P baskets for normal permission checks
             nonPBaskets.push(out.basket)
@@ -3533,6 +3651,9 @@ export class WalletPermissionsManager implements WalletInterface {
         }
       }
     }
+
+    // Check labels for p modules
+    const nonPLabels = this.splitLabelsByPermissionModule(args.labels, pModulesByScheme)
 
     // 2) Check permissions for non-P baskets
     for (const basket of nonPBaskets) {
@@ -3544,15 +3665,14 @@ export class WalletPermissionsManager implements WalletInterface {
       })
     }
 
-    if (args.labels) {
-      for (const lbl of args.labels) {
-        await this.ensureLabelAccess({
-          originator: originator!,
-          label: lbl,
-          reason: args.description,
-          usageType: 'apply'
-        })
-      }
+    // 3) Check permissions for non-P labels
+    for (const lbl of nonPLabels) {
+      await this.ensureLabelAccess({
+        originator: originator!,
+        label: lbl,
+        reason: args.description,
+        usageType: 'apply'
+      })
     }
 
     /**
@@ -3758,91 +3878,154 @@ export class WalletPermissionsManager implements WalletInterface {
     ...args: Parameters<WalletInterface['listActions']>
   ): ReturnType<WalletInterface['listActions']> {
     const [requestArgs, originator] = args
-    // for each label, ensure label access
-    if (requestArgs.labels) {
-      for (const lbl of requestArgs.labels) {
-        await this.ensureLabelAccess({
-          originator: originator!,
-          label: lbl,
-          reason: 'listActions',
-          usageType: 'list'
+
+    // 1) Identify unique P-modules involved (one per schemeID, preserving label order)
+    const pModulesByScheme = new Map<string, PermissionsModule>()
+    const nonPLabels = this.splitLabelsByPermissionModule(requestArgs.labels, pModulesByScheme)
+
+    // 2) Check permissions for non-P labels
+    for (const lbl of nonPLabels) {
+      await this.ensureLabelAccess({
+        originator: originator!,
+        label: lbl,
+        reason: 'listActions',
+        usageType: 'list'
+      })
+    }
+
+    // 3) Call underlying wallet, with P-module transformations if needed
+    let results: ListActionsResult
+
+    if (pModulesByScheme.size > 0) {
+      // P-modules are involved - chain transformations
+      const pModules = Array.from(pModulesByScheme.values())
+
+      // Chain onRequest calls through all modules in order
+      let transformedArgs: object = requestArgs
+      for (const module of pModules) {
+        const transformed = await module.onRequest({
+          method: 'listActions',
+          args: transformedArgs,
+          originator: originator!
+        })
+        transformedArgs = transformed.args
+      }
+
+      // Call underlying wallet with transformed args
+      results = await this.underlying.listActions(transformedArgs as ListActionsArgs, originator!)
+
+      // Chain onResponse calls in reverse order
+      for (let i = pModules.length - 1; i >= 0; i--) {
+        results = await pModules[i].onResponse(results, {
+          method: 'listActions',
+          originator: originator!
         })
       }
+    } else {
+      // No P-modules - call underlying wallet directly
+      results = await this.underlying.listActions(...args)
     }
-    const results = await this.underlying.listActions(...args)
-    // Transparently decrypt transaction metadata, if configured to do so.
-    if (results.actions) {
-      for (let i = 0; i < results.actions.length; i++) {
-        if (results.actions[i].description) {
-          results.actions[i].description = await this.maybeDecryptMetadata(results.actions[i].description)
-        }
-        if (results.actions[i].inputs) {
-          for (let j = 0; j < results.actions[i].inputs!.length; j++) {
-            if (results.actions[i].inputs![j].inputDescription) {
-              results.actions[i].inputs![j].inputDescription = await this.maybeDecryptMetadata(
-                results.actions[i].inputs![j].inputDescription
-              )
-            }
-          }
-        }
-        if (results.actions[i].outputs) {
-          for (let j = 0; j < results.actions[i].outputs!.length; j++) {
-            if (results.actions[i].outputs![j].outputDescription) {
-              results.actions[i].outputs![j].outputDescription = await this.maybeDecryptMetadata(
-                results.actions[i].outputs![j].outputDescription
-              )
-            }
-            if (results.actions[i].outputs![j].customInstructions) {
-              results.actions[i].outputs![j].customInstructions = await this.maybeDecryptMetadata(
-                results.actions[i].outputs![j].customInstructions!
-              )
-            }
-          }
-        }
-      }
-    }
-    return results
+
+    // 4) Transparently decrypt transaction metadata, if configured to do so.
+    return await this.decryptListActionsMetadata(results)
   }
 
   public async internalizeAction(
     ...args: Parameters<WalletInterface['internalizeAction']>
   ): ReturnType<WalletInterface['internalizeAction']> {
     const [requestArgs, originator] = args
-    // If the transaction is inserting outputs into baskets, we also ensure basket permission
+
+    // 1) Identify unique P-modules involved (one per schemeID) from both baskets and labels
+    const pModulesByScheme = new Map<string, PermissionsModule>()
+    const nonPBaskets: Array<{ outIndex: string; basket: string; customInstructions?: string }> = []
+
+    // Check baskets for p modules
     for (const outIndex in requestArgs.outputs) {
       const out = requestArgs.outputs[outIndex]
       if (out.protocol === 'basket insertion') {
-        // Delegate to permission module if needed
-        const pModuleResult = await this.delegateToPModuleIfNeeded(
-          out.insertionRemittance!.basket,
-          'internalizeAction',
-          requestArgs,
-          originator!,
-          async transformedArgs => {
-            if (out.insertionRemittance!.customInstructions) {
-              ;(transformedArgs as InternalizeActionArgs).outputs[outIndex].insertionRemittance!.customInstructions =
-                await this.maybeEncryptMetadata(out.insertionRemittance!.customInstructions)
-            }
-            return await this.underlying.internalizeAction(transformedArgs as InternalizeActionArgs, originator!)
-          }
-        )
-        if (pModuleResult !== null) {
-          return pModuleResult
-        }
-
-        await this.ensureBasketAccess({
-          originator: originator!,
-          basket: out.insertionRemittance!.basket,
-          reason: requestArgs.description,
-          usageType: 'insertion'
-        })
-        if (out.insertionRemittance!.customInstructions) {
-          requestArgs.outputs[outIndex].insertionRemittance!.customInstructions = await this.maybeEncryptMetadata(
-            out.insertionRemittance!.customInstructions
-          )
+        const basket = out.insertionRemittance!.basket
+        if (basket.startsWith('p ')) {
+          const schemeID = basket.split(' ')[1]
+          this.addPModuleByScheme(schemeID, 'basket', pModulesByScheme)
+        } else {
+          // Track non-P baskets for normal permission checks
+          nonPBaskets.push({
+            outIndex,
+            basket,
+            customInstructions: out.insertionRemittance!.customInstructions
+          })
         }
       }
     }
+
+    // Check labels for p modules
+    const nonPLabels = this.splitLabelsByPermissionModule(requestArgs.labels, pModulesByScheme)
+
+    // 2) Check permissions for non-P baskets
+    for (const { outIndex, basket, customInstructions } of nonPBaskets) {
+      await this.ensureBasketAccess({
+        originator: originator!,
+        basket,
+        reason: requestArgs.description,
+        usageType: 'insertion'
+      })
+      if (customInstructions) {
+        requestArgs.outputs[outIndex].insertionRemittance!.customInstructions =
+          await this.maybeEncryptMetadata(customInstructions)
+      }
+    }
+
+    // 3) Check permissions for non-P labels
+    for (const lbl of nonPLabels) {
+      await this.ensureLabelAccess({
+        originator: originator!,
+        label: lbl,
+        reason: requestArgs.description,
+        usageType: 'apply'
+      })
+    }
+
+    // 4) Call underlying wallet, with P-module transformations if needed
+    if (pModulesByScheme.size > 0) {
+      // P-modules are involved - chain transformations
+      const pModules = Array.from(pModulesByScheme.values())
+
+      // Chain onRequest calls through all modules in order
+      let transformedArgs: object = requestArgs
+      for (const module of pModules) {
+        const transformed = await module.onRequest({
+          method: 'internalizeAction',
+          args: transformedArgs,
+          originator: originator!
+        })
+        transformedArgs = transformed.args
+      }
+
+      // Encrypt custom instructions for p basket outputs
+      for (const outIndex in (transformedArgs as InternalizeActionArgs).outputs) {
+        const out = (transformedArgs as InternalizeActionArgs).outputs[outIndex]
+        if (out.protocol === 'basket insertion' && out.insertionRemittance?.customInstructions) {
+          out.insertionRemittance.customInstructions = await this.maybeEncryptMetadata(
+            out.insertionRemittance.customInstructions
+          )
+        }
+      }
+
+      // Call underlying wallet with transformed args
+      let results = await this.underlying.internalizeAction(transformedArgs as InternalizeActionArgs, originator!)
+
+      // Chain onResponse calls in reverse order
+      for (let i = pModules.length - 1; i >= 0; i--) {
+        results = await pModules[i].onResponse(results, {
+          method: 'internalizeAction',
+          originator: originator!
+        })
+      }
+
+      return results
+    }
+
+    // No P-modules - call underlying wallet directly
     return this.underlying.internalizeAction(...args)
   }
 
@@ -4359,11 +4542,15 @@ export class WalletPermissionsManager implements WalletInterface {
    * Checks if the given label is admin-reserved per BRC-100 rules:
    *
    *  - Must not start with `admin` (admin-reserved)
+   *  - Must not start with `p ` (permissioned labels requiring a permission module)
    *
    * If it violates these rules and the caller is not admin, we consider it "admin-only."
    */
   private isAdminLabel(label: string): boolean {
     if (label.startsWith('admin')) {
+      return true
+    }
+    if (label.startsWith('p ')) {
       return true
     }
     return false
