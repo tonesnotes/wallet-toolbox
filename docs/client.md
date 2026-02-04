@@ -4010,7 +4010,7 @@ export interface PermissionsManagerConfig {
     seekGroupedPermission?: boolean;
     differentiatePrivilegedOperations?: boolean;
     whitelistedCounterparties?: {
-        [counterparty: string]: string[];
+        [counterparty: PubKeyHex]: string[];
     };
 }
 ```
@@ -4214,7 +4214,7 @@ If a counterparty and protocol name is in this list, it is automatically granted
 
 ```ts
 whitelistedCounterparties?: {
-    [counterparty: string]: string[];
+    [counterparty: PubKeyHex]: string[];
 }
 ```
 

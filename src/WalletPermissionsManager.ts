@@ -427,7 +427,7 @@ export interface PermissionsManagerConfig {
   /**
    * If a counterparty and protocol name is in this list, it is automatically granted permission without prompting the user.
    */
-  whitelistedCounterparties?: { [counterparty: string]: string[] }
+  whitelistedCounterparties?: { [counterparty: PubKeyHex]: string[] }
 }
 
 /**
