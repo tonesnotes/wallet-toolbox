@@ -11,51 +11,60 @@ describe('operations.man tests', () => {
   test('0 review and release all production invalid change utxos', async () => {
     // const tags = [] // only return invalid change utxos, do not update them to unspendable.
     // const tags = ['release'] // release invalid change utxos to unspendable
-    const tags = ['all'] // only return invalid utxos, do not update them to unspendable.
-    // const tags = ['release', 'all'] // release invalid utxos to unspendable
+    // const tags = ['all'] // only return invalid utxos, do not update them to unspendable.
+    const tags = ['release', 'all'] // release invalid utxos to unspendable
     const action = tags.includes('release') ? 'updated to unspendable' : 'found'
     const target = tags.includes('all') ? 'spendable utxos' : 'spendable change utxos'
     const { env, storage } = await _tu.createMainReviewSetup()
-    const users = await storage.findUsers({ partial: { userId: 88 } })
-    // const users = await storage.findUsers({ partial: {} }) // all users...
-    const withInvalid: Record<number, { user: TableUser; outputs: WalletOutput[]; total: number }> = {}
-    const vargs: Validation.ValidListOutputsArgs = {
-      basket: specOpInvalidChange,
-      tags,
-      tagQueryMode: 'all',
-      includeLockingScripts: false,
-      includeTransactions: false,
-      includeCustomInstructions: false,
-      includeTags: false,
-      includeLabels: false,
-      limit: 0,
-      offset: 0,
-      seekPermission: false,
-      knownTxids: []
-    }
-    let log = ''
-    for (const user of users) {
-      const { userId } = user
-      const auth = { userId, identityKey: '' }
-      let r = await storage.listOutputs(auth, vargs)
-      if (r.totalOutputs > 0) {
-        const total: number = r.outputs.reduce((s, o) => (s += o.satoshis), 0)
-        let l = `userId ${userId}: ${r.totalOutputs} ${target} ${action}, total ${total}, ${user.identityKey}\n`
-        for (const o of r.outputs) {
-          l += `  ${o.outpoint} ${o.satoshis} now ${o.spendable ? 'spendable' : 'spent'}\n`
-        }
-        console.log(l)
-        log += l
-        withInvalid[userId] = { user, outputs: r.outputs, total }
+    const limit = 10
+    let offset = 0
+    const userIds = [2553]
+    //for (; ;) {
+    let log = ``
+    for (const userId of userIds) {
+      const users = await storage.findUsers({ partial: { userId } })
+      // const users = await storage.findUsers({ partial: {}, paged: { limit, offset } }) // all users...
+      if (users.length === 0) break
+      offset += users.length
+      const withInvalid: Record<number, { user: TableUser; outputs: WalletOutput[]; total: number }> = {}
+      const vargs: Validation.ValidListOutputsArgs = {
+        basket: specOpInvalidChange,
+        tags,
+        tagQueryMode: 'all',
+        includeLockingScripts: false,
+        includeTransactions: false,
+        includeCustomInstructions: false,
+        includeTags: false,
+        includeLabels: false,
+        limit: 0,
+        offset: 0,
+        seekPermission: false,
+        knownTxids: []
       }
+      for (const user of users) {
+        const { userId } = user
+        console.log('userId', userId)
+        const auth = { userId, identityKey: '' }
+        let r = await storage.listOutputs(auth, vargs)
+        if (r.totalOutputs > 0) {
+          const total: number = r.outputs.reduce((s, o) => (s += o.satoshis), 0)
+          let l = `userId ${userId}: ${r.totalOutputs} ${target} ${action}, total ${total}, ${user.identityKey}\n`
+          for (const o of r.outputs) {
+            l += `  ${o.outpoint} ${o.satoshis} now ${o.spendable ? 'spendable' : 'spent'}\n`
+          }
+          console.log(l)
+          log += l
+          withInvalid[userId] = { user, outputs: r.outputs, total }
+        }
+      }
+      console.log(log)
     }
-    console.log(log || `zero invalid ${target} ${action}.`)
     await storage.destroy()
   })
 
   test('1 review and unfail false doubleSpends', async () => {
     const { env, storage, services } = await _tu.createMainReviewSetup()
-    let offset = 400
+    let offset = 1500
     const limit = 100
     let allUnfails: number[] = []
     let reviewed = 0
@@ -88,7 +97,7 @@ describe('operations.man tests', () => {
 
   test('2 review and unfail false invalids', async () => {
     const { env, storage, services } = await _tu.createMainReviewSetup()
-    let offset = 500
+    let offset = 1400
     const limit = 100
     let allUnfails: number[] = []
     let reviewed = 0

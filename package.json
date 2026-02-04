@@ -1,9 +1,16 @@
 {
   "name": "@bsv/wallet-toolbox",
-  "version": "1.8.2",
+  "version": "2.0.0",
   "description": "BRC100 conforming wallet, wallet storage and wallet signer components",
   "main": "./out/src/index.js",
   "types": "./out/src/index.d.ts",
+  "files": [
+    "out/src/",
+    "docs/",
+    "README.md",
+    "CHANGELOG.md",
+    "license.md"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bsv-blockchain/wallet-toolbox.git"
@@ -31,8 +38,8 @@
   },
   "homepage": "https://github.com/bsv-blockchain/wallet-toolbox#readme",
   "dependencies": {
-    "@bsv/auth-express-middleware": "^1.2.3",
-    "@bsv/payment-express-middleware": "^1.2.3",
+    "@bsv/auth-express-middleware": "^2.0.2",
+    "@bsv/payment-express-middleware": "^2.0.0",
     "@bsv/sdk": "^2.0.0",
     "express": "^4.21.2",
     "idb": "^8.0.2",
