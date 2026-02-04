@@ -622,6 +622,10 @@ export abstract class TestUtilsWalletStorage {
    * Uses a unique file:memdb_xxx?mode=memory&cache=shared URI to create
    * a completely isolated database per call while keeping it in memory.
    * Must use min: 1 to keep the same connection (and thus the same db) alive.
+   *
+   * IMPORTANT: For in-memory SQLite, the connection must never be destroyed
+   * or the database will be lost. We set very high idle timeouts to prevent
+   * the pool from destroying the connection.
    */
   static createMemorySQLite(): Knex {
     // Use a unique identifier to completely isolate this in-memory database
@@ -633,10 +637,24 @@ export abstract class TestUtilsWalletStorage {
       pool: {
         min: 1,
         max: 1,
+        // Prevent the pool from destroying the connection - this is critical for
+        // in-memory SQLite because destroying the connection loses the database.
+        // Use very high timeouts to effectively disable idle connection destruction.
+        idleTimeoutMillis: 60 * 60 * 1000, // 1 hour
+        acquireTimeoutMillis: 30000,
+        createTimeoutMillis: 30000,
+        destroyTimeoutMillis: 5000,
+        reapIntervalMillis: 1000,
+        // Propagate errors from afterCreate
+        propagateCreateError: true,
         // Enable foreign keys on every new connection
         afterCreate: (conn: any, done: (err?: Error) => void) => {
-          conn.pragma('foreign_keys = ON')
-          done()
+          try {
+            conn.pragma('foreign_keys = ON')
+            done()
+          } catch (err) {
+            done(err as Error)
+          }
         }
       }
     }
