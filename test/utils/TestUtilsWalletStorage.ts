@@ -592,7 +592,7 @@ export abstract class TestUtilsWalletStorage {
 
   static createLocalSQLite(filename: string): Knex {
     const config: Knex.Config = {
-      client: 'sqlite3',
+      client: 'better-sqlite3',
       connection: { filename },
       useNullAsDefault: true
     }
@@ -2102,14 +2102,16 @@ export const logUniqueConstraintError = (
   columnNames: string[],
   logEnabled: boolean = false
 ): void => {
-  if (logEnabled) {
-    // Construct the expected error message string with the table name prefixed to each column
-    const expectedErrorString = `SQLITE_CONSTRAINT: UNIQUE constraint failed: ${columnNames.map(col => `${tableName}.${col}`).join(', ')}`
+  // The unique constraint error message differs between sqlite3 and better-sqlite3:
+  // - sqlite3: "SQLITE_CONSTRAINT: UNIQUE constraint failed: table.column"
+  // - better-sqlite3: "UNIQUE constraint failed: table.column"
+  const constraintPart = `UNIQUE constraint failed: ${columnNames.map(col => `${tableName}.${col}`).join(', ')}`
 
-    logger('expectedErrorString=', expectedErrorString)
+  if (logEnabled) {
+    logger('constraintPart=', constraintPart)
 
     // Check if the error message contains the expected string
-    if (error.message.includes(expectedErrorString)) {
+    if (error.message.includes(constraintPart)) {
       console.log(`Unique constraint error for columns ${columnNames.join(', ')} caught as expected:`, error.message)
     } else {
       console.log('Unexpected error message:', error.message)
@@ -2117,11 +2119,7 @@ export const logUniqueConstraintError = (
   }
 
   // If the error doesn't match the expected unique constraint error message, throw it
-  if (
-    !error.message.includes(
-      `SQLITE_CONSTRAINT: UNIQUE constraint failed: ${columnNames.map(col => `${tableName}.${col}`).join(', ')}`
-    )
-  ) {
+  if (!error.message.includes(constraintPart)) {
     console.log('Unexpected error:', error.message)
     throw new Error(`Unexpected error: ${error.message}`)
   }
@@ -2146,7 +2144,10 @@ const logForeignConstraintError = (
   logEnabled: boolean = false
 ): void => {
   if (logEnabled) {
-    if (error.message.includes(`SQLITE_CONSTRAINT: FOREIGN KEY constraint failed`)) {
+    // The foreign key constraint error message differs between sqlite3 and better-sqlite3:
+    // - sqlite3: "SQLITE_CONSTRAINT: FOREIGN KEY constraint failed"
+    // - better-sqlite3: "FOREIGN KEY constraint failed"
+    if (error.message.includes(`FOREIGN KEY constraint failed`)) {
       logger(`${columnName} constraint error caught as expected:`, error.message)
     } else {
       logger('Unexpected error:', error.message)

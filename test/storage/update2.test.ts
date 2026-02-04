@@ -43,7 +43,7 @@ describe('update2 tests', () => {
 
     // Need to pool connections
     const knexSQLite: Knex = knex({
-      client: 'sqlite3',
+      client: 'better-sqlite3',
       connection: {
         filename: localSQLiteFile
       },
