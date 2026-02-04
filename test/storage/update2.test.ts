@@ -31,7 +31,7 @@ import {
 
 setLogging(false)
 
-import knex, { Knex } from 'knex'
+import { Knex } from 'knex'
 
 describe('update2 tests', () => {
   const storages: StorageKnex[] = []
@@ -41,18 +41,8 @@ describe('update2 tests', () => {
   const createDB = async (databaseName: string): Promise<void> => {
     const localSQLiteFile = await _tu.newTmpFile(`${databaseName}.sqlite`, false, false, true)
 
-    // Need to pool connections
-    const knexSQLite: Knex = knex({
-      client: 'better-sqlite3',
-      connection: {
-        filename: localSQLiteFile
-      },
-      useNullAsDefault: true,
-      pool: {
-        min: 1,
-        max: 5
-      }
-    })
+    // Use the standard utility to create SQLite connections with proper foreign key support
+    const knexSQLite: Knex = _tu.createLocalSQLite(localSQLiteFile)
 
     const storage = new StorageKnex({
       ...StorageKnex.defaultOptions(),
@@ -65,6 +55,11 @@ describe('update2 tests', () => {
     await storage.dropAllData()
     await storage.migrate('test setup', '1'.repeat(64))
     await storage.makeAvailable()
+
+    // Explicitly enable foreign keys AFTER all setup operations, since dropAllData/migrate
+    // might reset the connection state. This is a belt and suspenders approach.
+    await knexSQLite.raw('PRAGMA foreign_keys = ON')
+
     const setup = await _tu.createTestSetup1(storage)
 
     setups.push({ setup, storage })

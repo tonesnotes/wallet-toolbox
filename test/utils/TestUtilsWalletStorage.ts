@@ -596,20 +596,20 @@ export abstract class TestUtilsWalletStorage {
       connection: { filename },
       useNullAsDefault: true,
       pool: {
-        min: 0,
+        min: 1,
         max: 1,
-        // Aggressive cleanup for better-sqlite3 to avoid race conditions between tests
-        acquireTimeoutMillis: 5000,
-        createTimeoutMillis: 5000,
-        destroyTimeoutMillis: 1000,
-        idleTimeoutMillis: 1000,
-        reapIntervalMillis: 500,
+        // Keep the connection alive to ensure foreign key PRAGMA persists
+        acquireTimeoutMillis: 30000,
+        createTimeoutMillis: 30000,
+        destroyTimeoutMillis: 5000,
+        idleTimeoutMillis: 60000,
+        reapIntervalMillis: 1000,
         createRetryIntervalMillis: 100,
         // Enable foreign keys on every new connection
         // PRAGMA foreign_keys is a per-connection setting in SQLite
-        afterCreate: (conn: any, done: (err: Error | null, conn: any) => void) => {
+        afterCreate: (conn: any, done: Function) => {
           conn.pragma('foreign_keys = ON')
-          done(null, conn)
+          done()
         }
       }
     }
@@ -648,13 +648,9 @@ export abstract class TestUtilsWalletStorage {
         // Propagate errors from afterCreate
         propagateCreateError: true,
         // Enable foreign keys on every new connection
-        afterCreate: (conn: any, done: (err: Error | null, conn: any) => void) => {
-          try {
-            conn.pragma('foreign_keys = ON')
-            done(null, conn)
-          } catch (err) {
-            done(err as Error, conn)
-          }
+        afterCreate: (conn: any, done: Function) => {
+          conn.pragma('foreign_keys = ON')
+          done()
         }
       }
     }

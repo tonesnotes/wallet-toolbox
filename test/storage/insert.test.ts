@@ -12,6 +12,7 @@ describe('insert tests', () => {
   beforeAll(async () => {
     // Use in-memory SQLite to avoid file-based race conditions in parallel tests
     const knexSQLite = _tu.createMemorySQLite()
+
     storages.push(
       new StorageKnex({
         ...StorageKnex.defaultOptions(),
@@ -34,6 +35,23 @@ describe('insert tests', () => {
     for (const storage of storages) {
       await storage.dropAllData()
       await storage.migrate('insert tests', '1'.repeat(64))
+    }
+
+    // Explicitly enable foreign keys AFTER all setup operations, since dropAllData/migrate
+    // might reset the connection state. This is a belt and suspenders approach.
+    await knexSQLite.raw('PRAGMA foreign_keys = ON')
+  })
+
+  // Re-enable foreign keys before each test to ensure constraint checking works
+  // This is needed because the connection pool or migrations might reset the pragma
+  beforeEach(async () => {
+    for (const storage of storages) {
+      if (storage instanceof StorageKnex) {
+        const client = storage.knex.client.config.client
+        if (client === 'better-sqlite3') {
+          await storage.knex.raw('PRAGMA foreign_keys = ON')
+        }
+      }
     }
   })
 
