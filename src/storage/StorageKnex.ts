@@ -955,14 +955,15 @@ export class StorageKnex extends StorageProvider implements WalletStorageProvide
       this._settings = await this.readSettings()
     }
 
-    if (!this._verifiedReadyForDatabaseAccess) {
-      // Make sure foreign key constraint checking is turned on in SQLite.
-      if (this._settings.dbtype === 'SQLite') {
-        await this.toDb(trx).raw('PRAGMA foreign_keys = ON;')
-      }
-
-      this._verifiedReadyForDatabaseAccess = true
+    // Always run the PRAGMA for SQLite to ensure foreign key constraints are enabled.
+    // This is necessary because PRAGMA foreign_keys is a per-connection setting,
+    // and connection pools may create new connections that don't have it set.
+    // The performance impact is minimal as SQLite handles this efficiently.
+    if (this._settings.dbtype === 'SQLite') {
+      await this.toDb(trx).raw('PRAGMA foreign_keys = ON;')
     }
+
+    this._verifiedReadyForDatabaseAccess = true
 
     return this._settings.dbtype
   }

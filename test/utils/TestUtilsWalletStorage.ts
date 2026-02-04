@@ -594,7 +594,51 @@ export abstract class TestUtilsWalletStorage {
     const config: Knex.Config = {
       client: 'better-sqlite3',
       connection: { filename },
-      useNullAsDefault: true
+      useNullAsDefault: true,
+      pool: {
+        min: 0,
+        max: 1,
+        // Aggressive cleanup for better-sqlite3 to avoid race conditions between tests
+        acquireTimeoutMillis: 5000,
+        createTimeoutMillis: 5000,
+        destroyTimeoutMillis: 1000,
+        idleTimeoutMillis: 1000,
+        reapIntervalMillis: 500,
+        createRetryIntervalMillis: 100,
+        // Enable foreign keys on every new connection
+        // PRAGMA foreign_keys is a per-connection setting in SQLite
+        afterCreate: (conn: any, done: (err?: Error) => void) => {
+          conn.pragma('foreign_keys = ON')
+          done()
+        }
+      }
+    }
+    const knex = makeKnex(config)
+    return knex
+  }
+
+  /**
+   * Create an in-memory SQLite database for testing.
+   * Uses a unique file:memdb_xxx?mode=memory&cache=shared URI to create
+   * a completely isolated database per call while keeping it in memory.
+   * Must use min: 1 to keep the same connection (and thus the same db) alive.
+   */
+  static createMemorySQLite(): Knex {
+    // Use a unique identifier to completely isolate this in-memory database
+    const uniqueId = `memdb_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`
+    const config: Knex.Config = {
+      client: 'better-sqlite3',
+      connection: { filename: `file:${uniqueId}?mode=memory&cache=shared` },
+      useNullAsDefault: true,
+      pool: {
+        min: 1,
+        max: 1,
+        // Enable foreign keys on every new connection
+        afterCreate: (conn: any, done: (err?: Error) => void) => {
+          conn.pragma('foreign_keys = ON')
+          done()
+        }
+      }
     }
     const knex = makeKnex(config)
     return knex

@@ -10,8 +10,8 @@ describe('insert tests', () => {
   const env = _tu.getEnv(chain)
 
   beforeAll(async () => {
-    const localSQLiteFile = await _tu.newTmpFile('inserttest.sqlite', false, false, true)
-    const knexSQLite = _tu.createLocalSQLite(localSQLiteFile)
+    // Use in-memory SQLite to avoid file-based race conditions in parallel tests
+    const knexSQLite = _tu.createMemorySQLite()
     storages.push(
       new StorageKnex({
         ...StorageKnex.defaultOptions(),
