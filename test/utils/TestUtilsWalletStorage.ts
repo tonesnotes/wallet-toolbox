@@ -607,9 +607,9 @@ export abstract class TestUtilsWalletStorage {
         createRetryIntervalMillis: 100,
         // Enable foreign keys on every new connection
         // PRAGMA foreign_keys is a per-connection setting in SQLite
-        afterCreate: (conn: any, done: (err?: Error) => void) => {
+        afterCreate: (conn: any, done: (err: Error | null, conn: any) => void) => {
           conn.pragma('foreign_keys = ON')
-          done()
+          done(null, conn)
         }
       }
     }
@@ -648,12 +648,12 @@ export abstract class TestUtilsWalletStorage {
         // Propagate errors from afterCreate
         propagateCreateError: true,
         // Enable foreign keys on every new connection
-        afterCreate: (conn: any, done: (err?: Error) => void) => {
+        afterCreate: (conn: any, done: (err: Error | null, conn: any) => void) => {
           try {
             conn.pragma('foreign_keys = ON')
-            done()
+            done(null, conn)
           } catch (err) {
-            done(err as Error)
+            done(err as Error, conn)
           }
         }
       }
