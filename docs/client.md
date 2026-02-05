@@ -4210,7 +4210,9 @@ seekSpendingPermissions?: boolean
 
 ###### Property whitelistedCounterparties
 
-If a counterparty and protocol name is in this list, it is automatically granted permission without prompting the user.
+An allowlist mapping counterparty identity public keys (hex)
+to protocol names that are automatically permitted
+without prompting the user.
 
 ```ts
 whitelistedCounterparties?: {

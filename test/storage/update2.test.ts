@@ -618,7 +618,10 @@ describe('update2 tests', () => {
       console.log('Foreign keys status:', JSON.stringify(fkStatus))
       // Check what data exists
       const users = await storage.findUsers({ partial: {} })
-      console.log('Users:', users.map(u => u.userId))
+      console.log(
+        'Users:',
+        users.map(u => u.userId)
+      )
       const txs = await storage.findTransactions({ partial: { userId: 1 } })
       console.log('Transactions for userId=1:', txs.length)
       await expect(storage.updateUser(1, { userId: 0 })).rejects.toThrow(/FOREIGN KEY constraint failed/)
