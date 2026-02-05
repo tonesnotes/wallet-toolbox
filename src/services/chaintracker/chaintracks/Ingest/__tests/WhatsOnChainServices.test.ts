@@ -8,8 +8,11 @@ import { StopListenerToken, WocHeadersBulkListener, WocHeadersLiveListener } fro
 import { Chain } from '../../../../../sdk'
 import { URL } from 'url'
 import { HeightRange } from '../../util/HeightRange'
+import { _tu } from '../../../../../../test/utils/TestUtilsWalletStorage'
 
 describe('WhatsOnChainServices tests', () => {
+  if (_tu.noEnv('main')) return
+
   jest.setTimeout(999999999)
 
   const chain: Chain = 'main'
