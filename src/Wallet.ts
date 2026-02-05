@@ -100,6 +100,8 @@ import { PrivilegedKeyManager } from './sdk/PrivilegedKeyManager'
 import { WERR_INTERNAL, WERR_INVALID_PARAMETER, WERR_REVIEW_ACTIONS } from './sdk/WERR_errors'
 import { AuthId, StorageCreateActionResult, StorageInternalizeActionResult } from './sdk/WalletStorage.interfaces'
 import { WalletError } from './sdk/WalletError'
+import { asArray } from './utility/utilityHelpers.noBuffer'
+import { ValidListOutputsArgs } from '@bsv/sdk/dist/types/src/wallet/validationHelpers'
 
 /**
  * The preferred means of constructing a `Wallet` is with a `WalletArgs` instance.
@@ -407,13 +409,13 @@ export class Wallet implements WalletInterface, ProtoWallet {
     originator?: OriginatorDomainNameStringUnder250Bytes
   ): Promise<ListOutputsResult> {
     Validation.validateOriginator(originator)
-    const { vargs } = this.validateAuthAndArgs(args, Validation.validateListOutputsArgs)
+    const { vargs } = this.validateAuthAndArgs(args, validateListOutputsArgs)
     if (this.autoKnownTxids && !vargs.knownTxids) {
       vargs.knownTxids = this.getKnownTxids()
     }
     const r = await this.storage.listOutputs(vargs)
     if (r.BEEF) {
-      this.beef.mergeBeefFromParty(this.storageParty, r.BEEF)
+      this.beef.mergeBeefFromParty(this.storageParty, asArray(r.BEEF))
       r.BEEF = this.verifyReturnedTxidOnlyBEEF(r.BEEF)
     }
     return r
@@ -805,7 +807,7 @@ export class Wallet implements WalletInterface, ProtoWallet {
       logger?.log('action created')
 
       if (r.tx) {
-        this.beef.mergeBeefFromParty(this.storageParty, r.tx)
+        this.beef.mergeBeefFromParty(this.storageParty, asArray(r.tx))
       }
 
       if (r.tx) {
@@ -1011,9 +1013,10 @@ export class Wallet implements WalletInterface, ProtoWallet {
    *
    * @returns {number} sum of output satoshis
    */
-  async balance(): Promise<number> {
-    const args: ListOutputsArgs = {
-      basket: specOpWalletBalance
+  async balance(args?: ListOutputsArgs): Promise<number> {
+    args ||= { basket: specOpWalletBalance }
+    if (args.basket !== specOpWalletBalance) {
+      args.tags = [...(args.tags || []), specOpWalletBalance]
     }
     const r = await this.listOutputs(args)
     return r.totalOutputs
@@ -1166,4 +1169,19 @@ export function throwDummyReviewActions() {
     beef.toBinaryAtomic(txid),
     [`${txid}.0`]
   )
+}
+
+/**
+ * Implement BRC-112
+ * @param vargs
+ * @returns
+ */
+function validateListOutputsArgs(args: ListOutputsArgs): ValidListOutputsArgs {
+  const vargs = Validation.validateListOutputsArgs(args)
+  const balancePrefix = 'balance '
+  if (vargs.basket.startsWith(balancePrefix)) {
+    vargs.basket = vargs.basket.slice(balancePrefix.length)
+    vargs.tags = [...vargs.tags, specOpWalletBalance]
+  }
+  return vargs
 }

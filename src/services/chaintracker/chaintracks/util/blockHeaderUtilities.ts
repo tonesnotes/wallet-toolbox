@@ -4,7 +4,6 @@ import { asArray, asString } from '../../../../utility/utilityHelpers.noBuffer'
 import { doubleSha256BE } from '../../../../utility/utilityHelpers'
 import { Chain } from '../../../../sdk/types'
 import { ChaintracksFsApi } from '../Api/ChaintracksFsApi'
-import { ReaderUint8Array } from '../../../../utility/ReaderUint8Array'
 import { BulkHeaderFileInfo } from './BulkHeaderFile'
 import { ChaintracksFetchApi } from '../Api/ChaintracksFetchApi'
 import { isKnownValidBulkHeaderFile } from './validBulkHeaderFilesByFileHash'
@@ -453,7 +452,7 @@ export function serializeBaseBlockHeaders(headers: BlockHeader[]): Uint8Array {
  * @publicbody
  */
 export function deserializeBaseBlockHeader(buffer: number[] | Uint8Array, offset = 0): BaseBlockHeader {
-  const reader = ReaderUint8Array.makeReader(buffer, offset)
+  const reader = Utils.ReaderUint8Array.makeReader(buffer, offset)
   const header: BaseBlockHeader = {
     version: reader.readUInt32LE(),
     previousHash: asString(reader.read(32).reverse()),

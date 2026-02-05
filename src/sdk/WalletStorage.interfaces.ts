@@ -1,6 +1,7 @@
 import {
   AbortActionArgs,
   AbortActionResult,
+  BEEF,
   Beef,
   ChainTracker,
   InternalizeActionArgs,
@@ -303,7 +304,7 @@ export interface ReviewActionResult {
   /**
    * Merged beef of competingTxs, valid when status is 'doubleSpend'.
    */
-  competingBeef?: number[]
+  competingBeef?: BEEF
 }
 
 export interface StorageProcessActionResults {
@@ -315,7 +316,7 @@ export interface StorageProcessActionResults {
 export interface ProvenOrRawTx {
   proven?: TableProvenTx
   rawTx?: number[]
-  inputBEEF?: number[]
+  inputBEEF?: BEEF
 }
 
 export interface PurgeParams {
