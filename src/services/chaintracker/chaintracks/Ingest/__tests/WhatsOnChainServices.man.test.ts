@@ -11,7 +11,6 @@ import { HeightRange } from '../../util/HeightRange'
 import { _tu } from '../../../../../../test/utils/TestUtilsWalletStorage'
 
 describe('WhatsOnChainServices tests', () => {
-  if (_tu.noEnv('main')) return
 
   jest.setTimeout(999999999)
 
