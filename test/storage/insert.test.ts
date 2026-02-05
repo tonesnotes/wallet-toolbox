@@ -11,7 +11,10 @@ describe('insert tests', () => {
 
   beforeAll(async () => {
     // Use in-memory SQLite to avoid file-based race conditions in parallel tests
-    const knexSQLite = _tu.createMemorySQLite()
+    // memory db seems to work in simple test execution modes but fails when running full test suite...
+    //const knexSQLite = _tu.createMemorySQLite()
+    const localSQLiteFile = await _tu.newTmpFile('inserttest.sqlite', false, false, true)
+    const knexSQLite = _tu.createLocalSQLite(localSQLiteFile)
 
     storages.push(
       new StorageKnex({
