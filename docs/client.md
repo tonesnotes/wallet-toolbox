@@ -1,11 +1,3 @@
-# CLIENT: BSV Wallet Toolbox API Documentation
-
-The documentation is split into various pages, this page is the API of the `@bsv/wallet-toolbox-client` package;
-which is the subset of the `@bsv/wallet-toolbox` that is compatible with browser deployment contexts.
-
-[Return To Top](./README.md)
-
-<!--#region ts2md-api-merged-here-->
 ### API
 
 Links: [API](#api), [Interfaces](#interfaces), [Classes](#classes), [Functions](#functions), [Types](#types), [Variables](#variables)
@@ -3785,6 +3777,7 @@ export interface PermissionRequest {
     type: "protocol" | "basket" | "certificate" | "spending";
     originator: string;
     displayOriginator?: string;
+    usageType?: string;
     privileged?: boolean;
     protocolID?: WalletProtocol;
     counterparty?: string;
@@ -15139,6 +15132,13 @@ export class WalletPermissionsManager implements WalletInterface {
         certType: string;
         fields: string[];
     }): Promise<boolean> 
+    public async revokePermissions(oldTokens: PermissionToken[]): Promise<PermissionToken[]> 
+    public async revokeAllForOriginator(originator: string, opts?: {
+        protocol?: boolean;
+        basket?: boolean;
+        certificate?: boolean;
+        spending?: boolean;
+    }): Promise<PermissionToken[]> 
     public async revokePermission(oldToken: PermissionToken): Promise<void> 
     public async createAction(args: Parameters<WalletInterface["createAction"]>[0], originator?: string): ReturnType<WalletInterface["createAction"]> 
     public async signAction(...args: Parameters<WalletInterface["signAction"]>): ReturnType<WalletInterface["signAction"]> 
@@ -19765,5 +19765,3 @@ See also: [BulkHeaderFileInfo](./services.md#interface-bulkheaderfileinfo)
 Links: [API](#api), [Interfaces](#interfaces), [Classes](#classes), [Functions](#functions), [Types](#types), [Variables](#variables)
 
 ---
-
-<!--#endregion ts2md-api-merged-here-->
