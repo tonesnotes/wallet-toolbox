@@ -6,11 +6,16 @@ attention to changes that materially alter behavior or extend functionality.
 
 ## wallet-toolbox 2.0.0
 
+Update to bsv/sdk 2.0.0
+
+Change sqlite support to better-sqlite3
+
 Changes to improve computing balances (sum of satoshis) over various sets of wallet spendable outputs:
 
 - Added optional ListOutputsArgs argument to Wallet balance method. This enables using the same arguments in a call to listOutputs and balance. This method injects the specOpWalletBalance string constant into the appropriate basket or tag property and returns totalOutputs as its result.
 - Fully optimized specOpWalletBalance processing within listOutputsKnex to use SQL sum(satoshis). Much faster than returning arrays of outputs and summing WalletOutput results.
 - specOpWalletBalance can now be specified as a ListOutputsArgs tag value. This enables computing sum of satoshis on any basket and with optional tag filtering.
+- Implement BRC-112
 
 ## wallet-toolbox 1.7.24
 

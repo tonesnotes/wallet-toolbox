@@ -1173,10 +1173,10 @@ export function throwDummyReviewActions() {
 
 /**
  * Implement BRC-112
- * @param vargs 
- * @returns 
+ * @param vargs
+ * @returns
  */
-function validateListOutputsArgs (args: ListOutputsArgs): ValidListOutputsArgs {
+function validateListOutputsArgs(args: ListOutputsArgs): ValidListOutputsArgs {
   const vargs = Validation.validateListOutputsArgs(args)
   const balancePrefix = 'balance '
   if (vargs.basket.startsWith(balancePrefix)) {
