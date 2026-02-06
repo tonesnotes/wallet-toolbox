@@ -13,18 +13,18 @@ describe('StorageClient tests', () => {
 
   let client: TestWalletOnly
 
-  let logSpy: jest.SpyInstance;
-  let capturedLogs: string[] = [];
-  let errorSpy: jest.SpyInstance;
-  let capturedErrors: string[] = [];
+  let logSpy: jest.SpyInstance
+  let capturedLogs: string[] = []
+  let errorSpy: jest.SpyInstance
+  let capturedErrors: string[] = []
 
   beforeAll(async () => {
     logSpy = jest.spyOn(console, 'log').mockImplementation((...args: any[]) => {
-      capturedLogs.push(args.map(String).join(' '));
-    });
+      capturedLogs.push(args.map(String).join(' '))
+    })
     errorSpy = jest.spyOn(console, 'error').mockImplementation((...args: any[]) => {
-      capturedErrors.push(args.map(String).join(' '));
-    });
+      capturedErrors.push(args.map(String).join(' '))
+    })
 
     server = await createStorageServer()
 
@@ -38,8 +38,8 @@ describe('StorageClient tests', () => {
   afterAll(async () => {
     //console.log('All captured logs:', capturedLogs);
     //console.log('All captured errors:', capturedErrors);
-    logSpy.mockRestore();
-    errorSpy.mockRestore();
+    logSpy.mockRestore()
+    errorSpy.mockRestore()
 
     await client.wallet.destroy()
     await server.server.close()

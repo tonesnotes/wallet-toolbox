@@ -164,6 +164,7 @@ export interface PermissionRequest {
   type: 'protocol' | 'basket' | 'certificate' | 'spending'
   originator: string // The domain or FQDN of the requesting application
   displayOriginator?: string // Optional raw/original originator string for UI purposes
+  usageType?: string // The usage context of the request (used for prompt coalescing)
   privileged?: boolean // For "protocol" or "certificate" usage, indicating privileged key usage
   protocolID?: WalletProtocol // For type='protocol': BRC-43 style (securityLevel, protocolName)
   counterparty?: string // For type='protocol': e.g. target public key or "self"/"anyone"
@@ -520,6 +521,8 @@ export class WalletPermissionsManager implements WalletInterface {
     Promise<{ groupPermissions: GroupedPermissions | null; counterpartyPermissions: CounterpartyPermissions | null }>
   > = new Map()
   private static readonly MANIFEST_CACHE_TTL_MS = 5 * 60 * 1000
+
+  private groupedPermissionFlowTail: Map<string, Promise<void>> = new Map()
 
   private pactEstablishedCache: Map<string, number> = new Map()
 
@@ -1262,6 +1265,7 @@ export class WalletPermissionsManager implements WalletInterface {
           privileged,
           protocolID,
           counterparty,
+          usageType,
           reason,
           renewal: true,
           previousToken: token
@@ -1278,6 +1282,7 @@ export class WalletPermissionsManager implements WalletInterface {
         privileged,
         protocolID,
         counterparty,
+        usageType,
         reason,
         renewal: false
       })
@@ -1332,6 +1337,7 @@ export class WalletPermissionsManager implements WalletInterface {
           type: 'basket',
           originator,
           basket,
+          usageType,
           reason,
           renewal: true,
           previousToken: token
@@ -1346,6 +1352,7 @@ export class WalletPermissionsManager implements WalletInterface {
         type: 'basket',
         originator,
         basket,
+        usageType,
         reason,
         renewal: false
       })
@@ -1420,6 +1427,7 @@ export class WalletPermissionsManager implements WalletInterface {
           originator,
           privileged,
           certificate: { verifier, certType, fields },
+          usageType,
           reason,
           renewal: true,
           previousToken: token
@@ -1434,6 +1442,7 @@ export class WalletPermissionsManager implements WalletInterface {
         originator,
         privileged,
         certificate: { verifier, certType, fields },
+        usageType,
         reason,
         renewal: false
       })
@@ -1652,50 +1661,64 @@ export class WalletPermissionsManager implements WalletInterface {
       certificateAccess: []
     }
 
-    if (groupPermissions.spendingAuthorization) {
-      const hasAuth = await this.hasSpendingAuthorization({
-        originator,
-        satoshis: groupPermissions.spendingAuthorization.amount
-      })
-      if (!hasAuth) {
-        permissionsToRequest.spendingAuthorization = groupPermissions.spendingAuthorization
-      }
-    }
+    const [spendingAuthorization, protocolPermissions, basketAccess, certificateAccess] = await Promise.all([
+      (async () => {
+        if (!groupPermissions.spendingAuthorization) return undefined
+        const hasAuth = await this.hasSpendingAuthorization({
+          originator,
+          satoshis: groupPermissions.spendingAuthorization.amount
+        })
+        return hasAuth ? undefined : groupPermissions.spendingAuthorization
+      })(),
+      (async () => {
+        const protocolChecks = await Promise.all(
+          (groupPermissions.protocolPermissions || []).map(async p => {
+            const hasPerm = await this.hasProtocolPermission({
+              originator,
+              privileged: false,
+              protocolID: p.protocolID,
+              counterparty: p.counterparty || 'self'
+            })
+            return hasPerm ? null : p
+          })
+        )
+        return protocolChecks.filter(Boolean) as any
+      })(),
+      (async () => {
+        const basketChecks = await Promise.all(
+          (groupPermissions.basketAccess || []).map(async b => {
+            const hasAccess = await this.hasBasketAccess({
+              originator,
+              basket: b.basket
+            })
+            return hasAccess ? null : b
+          })
+        )
+        return basketChecks.filter(Boolean) as any
+      })(),
+      (async () => {
+        const certChecks = await Promise.all(
+          (groupPermissions.certificateAccess || []).map(async c => {
+            const hasAccess = await this.hasCertificateAccess({
+              originator,
+              privileged: false,
+              verifier: c.verifierPublicKey,
+              certType: c.type,
+              fields: c.fields
+            })
+            return hasAccess ? null : c
+          })
+        )
+        return certChecks.filter(Boolean) as any
+      })()
+    ])
 
-    for (const p of groupPermissions.protocolPermissions || []) {
-      const hasPerm = await this.hasProtocolPermission({
-        originator,
-        privileged: false,
-        protocolID: p.protocolID,
-        counterparty: p.counterparty || 'self'
-      })
-      if (!hasPerm) {
-        permissionsToRequest.protocolPermissions!.push(p)
-      }
+    if (spendingAuthorization) {
+      permissionsToRequest.spendingAuthorization = spendingAuthorization
     }
-
-    for (const b of groupPermissions.basketAccess || []) {
-      const hasAccess = await this.hasBasketAccess({
-        originator,
-        basket: b.basket
-      })
-      if (!hasAccess) {
-        permissionsToRequest.basketAccess!.push(b)
-      }
-    }
-
-    for (const c of groupPermissions.certificateAccess || []) {
-      const hasAccess = await this.hasCertificateAccess({
-        originator,
-        privileged: false,
-        verifier: c.verifierPublicKey,
-        certType: c.type,
-        fields: c.fields
-      })
-      if (!hasAccess) {
-        permissionsToRequest.certificateAccess!.push(c)
-      }
-    }
+    permissionsToRequest.protocolPermissions = protocolPermissions
+    permissionsToRequest.basketAccess = basketAccess
+    permissionsToRequest.certificateAccess = certificateAccess
 
     return permissionsToRequest
   }
@@ -1791,18 +1814,18 @@ export class WalletPermissionsManager implements WalletInterface {
       return null
     }
 
-    const protocolsToRequest: CounterpartyPermissions['protocols'] = []
-    for (const p of counterpartyPermissions.protocols) {
-      const hasPerm = await this.hasProtocolPermission({
-        originator,
-        privileged: false,
-        protocolID: p.protocolID,
-        counterparty
+    const protocolChecks = await Promise.all(
+      counterpartyPermissions.protocols.map(async p => {
+        const hasPerm = await this.hasProtocolPermission({
+          originator,
+          privileged: false,
+          protocolID: p.protocolID,
+          counterparty
+        })
+        return hasPerm ? null : p
       })
-      if (!hasPerm) {
-        protocolsToRequest.push(p)
-      }
-    }
+    )
+    const protocolsToRequest: CounterpartyPermissions['protocols'] = protocolChecks.filter(Boolean) as any
 
     if (protocolsToRequest.length === 0) {
       this.markPactEstablished(originator, counterparty)
@@ -1914,21 +1937,24 @@ export class WalletPermissionsManager implements WalletInterface {
       protocolPermissions: []
     }
 
-    for (const p of manifestLevel2ForThisPeer) {
-      const hasPerm = await this.hasProtocolPermission({
-        originator,
-        privileged,
-        protocolID: p.protocolID,
-        counterparty: p.counterparty
-      })
-      if (!hasPerm) {
-        permissionsToRequest.protocolPermissions!.push({
+    const protocolChecks = await Promise.all(
+      manifestLevel2ForThisPeer.map(async p => {
+        const hasPerm = await this.hasProtocolPermission({
+          originator,
+          privileged,
           protocolID: p.protocolID,
-          counterparty: p.counterparty,
-          description: p.description
+          counterparty: p.counterparty
         })
-      }
-    }
+        return hasPerm
+          ? null
+          : {
+              protocolID: p.protocolID,
+              counterparty: p.counterparty,
+              description: p.description
+            }
+      })
+    )
+    permissionsToRequest.protocolPermissions = protocolChecks.filter(Boolean) as any
 
     if (!this.hasAnyPermissionsToRequest(permissionsToRequest)) {
       return null
@@ -1976,6 +2002,31 @@ export class WalletPermissionsManager implements WalletInterface {
 
     const satisfied = await this.checkSpecificPermissionAfterGroupFlow(currentRequest)
     return satisfied ? true : null
+  }
+
+  private async withGroupedPermissionFlowLock<T>(originator: string, fn: () => Promise<T>): Promise<T> {
+    const priorTail = this.groupedPermissionFlowTail.get(originator) || Promise.resolve()
+    const safePriorTail = priorTail.catch(() => {})
+
+    let release: (() => void) | undefined
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+
+    const currentTail = safePriorTail.then(() => gate)
+    this.groupedPermissionFlowTail.set(originator, currentTail)
+
+    await safePriorTail
+    try {
+      return await fn()
+    } finally {
+      release?.()
+      currentTail.finally(() => {
+        if (this.groupedPermissionFlowTail.get(originator) === currentTail) {
+          this.groupedPermissionFlowTail.delete(originator)
+        }
+      })
+    }
   }
 
   private async checkSpecificPermissionAfterGroupFlow(request: PermissionRequest): Promise<boolean> {
@@ -2113,6 +2164,17 @@ export class WalletPermissionsManager implements WalletInterface {
       displayOriginator: r.displayOriginator ?? r.previousToken?.rawOriginator ?? r.originator
     }
 
+    const key = this.buildActiveRequestKey(preparedRequest)
+
+    // If there's already a queue for the same resource, we piggyback on it
+    const existingQueue = this.activeRequests.get(key)
+
+    if (existingQueue && existingQueue.pending.length > 0) {
+      return new Promise<boolean>((resolve, reject) => {
+        existingQueue.pending.push({ resolve, reject })
+      })
+    }
+
     const pactResult = await this.maybeRequestPact(preparedRequest)
     if (pactResult !== null) {
       return pactResult
@@ -2123,55 +2185,78 @@ export class WalletPermissionsManager implements WalletInterface {
       return peerGroupResult
     }
 
-    const groupResult = await this.maybeRequestGroupedPermissions(preparedRequest)
+    const hadPendingGroupedFlowBefore =
+      this.config.seekGroupedPermission && this.groupedPermissionFlowTail.has(preparedRequest.originator)
+
+    let groupResult: boolean | null = null
+    if (this.config.seekGroupedPermission) {
+      groupResult = await this.withGroupedPermissionFlowLock(preparedRequest.originator, async () => {
+        return await this.maybeRequestGroupedPermissions(preparedRequest)
+      })
+    } else {
+      groupResult = await this.maybeRequestGroupedPermissions(preparedRequest)
+    }
+
     if (groupResult !== null) {
       return groupResult
     }
 
-    const key = this.buildRequestKey(preparedRequest)
+    if (this.config.seekGroupedPermission && hadPendingGroupedFlowBefore) {
+      const satisfiedAfterGroup = await this.checkSpecificPermissionAfterGroupFlow(preparedRequest)
+      if (satisfiedAfterGroup) {
+        return true
+      }
+    }
 
-    // If there's already a queue for the same resource, we piggyback on it
-    const existingQueue = this.activeRequests.get(key)
-    if (existingQueue && existingQueue.pending.length > 0) {
+    const existingQueueAfterGroups = this.activeRequests.get(key)
+    if (existingQueueAfterGroups && existingQueueAfterGroups.pending.length > 0) {
       return new Promise<boolean>((resolve, reject) => {
-        existingQueue.pending.push({ resolve, reject })
+        existingQueueAfterGroups.pending.push({ resolve, reject })
       })
     }
 
-    // Otherwise, create a new queue with a single entry
-    // Return a promise that resolves or rejects once the user grants/denies
     return new Promise<boolean>(async (resolve, reject) => {
       this.activeRequests.set(key, {
         request: preparedRequest,
         pending: [{ resolve, reject }]
       })
 
-      // Fire the relevant onXXXRequested event (which one depends on r.type)
-      switch (preparedRequest.type) {
-        case 'protocol':
-          await this.callEvent('onProtocolPermissionRequested', {
-            ...preparedRequest,
-            requestID: key
-          })
-          break
-        case 'basket':
-          await this.callEvent('onBasketAccessRequested', {
-            ...preparedRequest,
-            requestID: key
-          })
-          break
-        case 'certificate':
-          await this.callEvent('onCertificateAccessRequested', {
-            ...preparedRequest,
-            requestID: key
-          })
-          break
-        case 'spending':
-          await this.callEvent('onSpendingAuthorizationRequested', {
-            ...preparedRequest,
-            requestID: key
-          })
-          break
+      try {
+        // Fire the relevant onXXXRequested event (which one depends on r.type)
+        switch (preparedRequest.type) {
+          case 'protocol':
+            await this.callEvent('onProtocolPermissionRequested', {
+              ...preparedRequest,
+              requestID: key
+            })
+            break
+          case 'basket':
+            await this.callEvent('onBasketAccessRequested', {
+              ...preparedRequest,
+              requestID: key
+            })
+            break
+          case 'certificate':
+            await this.callEvent('onCertificateAccessRequested', {
+              ...preparedRequest,
+              requestID: key
+            })
+            break
+          case 'spending':
+            await this.callEvent('onSpendingAuthorizationRequested', {
+              ...preparedRequest,
+              requestID: key
+            })
+            break
+        }
+      } catch (e) {
+        const matching = this.activeRequests.get(key)
+        if (matching) {
+          for (const p of matching.pending) {
+            p.reject(e)
+          }
+          this.activeRequests.delete(key)
+        }
       }
     })
   }
@@ -3540,6 +3625,177 @@ export class WalletPermissionsManager implements WalletInterface {
     }
   }
 
+  public async revokePermissions(oldTokens: PermissionToken[]): Promise<PermissionToken[]> {
+    return await this.revokePermissionTokensBestEffort(oldTokens)
+  }
+
+  public async revokeAllForOriginator(
+    originator: string,
+    opts?: {
+      protocol?: boolean
+      basket?: boolean
+      certificate?: boolean
+      spending?: boolean
+    }
+  ): Promise<PermissionToken[]> {
+    const preparedOriginator = this.prepareOriginator(originator)
+    const include = {
+      protocol: true,
+      basket: true,
+      certificate: true,
+      spending: true,
+      ...(opts || {})
+    }
+
+    const [protocolTokens, basketTokens, certificateTokens, spendingTokens] = await Promise.all([
+      include.protocol ? this.listProtocolPermissions({ originator }) : Promise.resolve([]),
+      include.basket ? this.listBasketAccess({ originator }) : Promise.resolve([]),
+      include.certificate ? this.listCertificateAccess({ originator }) : Promise.resolve([]),
+      include.spending
+        ? this.listSpendingAuthorizations({ originator: preparedOriginator.normalized })
+        : Promise.resolve([])
+    ])
+
+    const spendingTokenList = spendingTokens.length ? [spendingTokens[0]] : []
+
+    const allTokens = [...protocolTokens, ...basketTokens, ...certificateTokens, ...spendingTokenList]
+    const seen = new Set<string>()
+    const deduped = allTokens.filter(t => {
+      const key = `${t.txid}.${t.outputIndex}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+
+    return await this.revokePermissions(deduped)
+  }
+
+  private async revokePermissionTokensBestEffort(items: PermissionToken[]): Promise<PermissionToken[]> {
+    const CHUNK = 15
+    return this.runBestEffortBatches(items, CHUNK, async chunk => {
+      await this.revokePermissionTokensChunk(chunk)
+      return chunk
+    })
+  }
+
+  private async revokePermissionTokensChunk(oldTokens: PermissionToken[]): Promise<void> {
+    if (!oldTokens.length) return
+
+    const inputBeef = new Beef()
+    for (const token of oldTokens) {
+      inputBeef.mergeBeef(Beef.fromBinary(token.tx))
+    }
+
+    const { signableTransaction } = await this.createAction(
+      {
+        description: `Revoke ${oldTokens.length} permissions`,
+        inputBEEF: inputBeef.toBinary(),
+        inputs: oldTokens.map((t, i) => ({
+          outpoint: `${t.txid}.${t.outputIndex}`,
+          unlockingScriptLength: 73,
+          inputDescription: `Consume old permission token #${i + 1}`
+        })),
+        options: {
+          acceptDelayedBroadcast: true,
+          randomizeOutputs: false,
+          signAndProcess: false
+        }
+      },
+      this.adminOriginator
+    )
+
+    if (!signableTransaction?.reference || !signableTransaction.tx) {
+      throw new Error('Failed to create signable transaction')
+    }
+
+    const tx = Transaction.fromAtomicBEEF(signableTransaction.tx)
+
+    const normalizeTxid = (txid?: string) => (txid ?? '').toLowerCase()
+    const reverseHexTxid = (txid: string) => {
+      const hex = normalizeTxid(txid)
+      if (!/^[0-9a-f]{64}$/.test(hex)) return hex
+      const bytes = hex.match(/../g)
+      return bytes ? bytes.reverse().join('') : hex
+    }
+    const matchesOutpointString = (outpoint: string, token: PermissionToken) => {
+      const dot = outpoint.lastIndexOf('.')
+      const colon = outpoint.lastIndexOf(':')
+      const sep = dot > colon ? dot : colon
+      if (sep === -1) return false
+      const txidPart = outpoint.slice(0, sep)
+      const indexPart = outpoint.slice(sep + 1)
+      const vout = Number(indexPart)
+      if (!Number.isFinite(vout)) return false
+      return normalizeTxid(txidPart) === normalizeTxid(token.txid) && vout === token.outputIndex
+    }
+
+    const findInputIndexForToken = (token: PermissionToken) => {
+      return tx.inputs.findIndex((input: any) => {
+        const txidCandidate: unknown =
+          input?.sourceTXID ??
+          input?.sourceTxid ??
+          input?.sourceTxId ??
+          input?.prevTxId ??
+          input?.prevTxid ??
+          input?.prevTXID ??
+          input?.txid ??
+          input?.txID
+
+        const voutCandidate: unknown =
+          input?.sourceOutputIndex ?? input?.sourceOutput ?? input?.outputIndex ?? input?.vout ?? input?.prevOutIndex
+
+        if (typeof txidCandidate === 'string' && typeof voutCandidate === 'number') {
+          const cand = normalizeTxid(txidCandidate)
+          const target = normalizeTxid(token.txid)
+          if (cand === target && voutCandidate === token.outputIndex) return true
+          if (cand === reverseHexTxid(token.txid) && voutCandidate === token.outputIndex) return true
+        }
+
+        const outpointCandidate: unknown = input?.outpoint ?? input?.sourceOutpoint ?? input?.prevOutpoint
+        if (typeof outpointCandidate === 'string' && matchesOutpointString(outpointCandidate, token)) return true
+
+        return false
+      })
+    }
+
+    const inputsToSign = oldTokens.map(token => {
+      let permInputIndex = findInputIndexForToken(token)
+      if (permInputIndex === -1 && tx.inputs.length === 1) {
+        permInputIndex = 0
+      }
+      if (permInputIndex === -1) {
+        throw new Error('Unable to locate permission token input for revocation.')
+      }
+      return { token, permInputIndex }
+    })
+
+    const pushdrop = new PushDrop(this.underlying)
+    const spends: Record<number, { unlockingScript: string }> = {}
+    const signed = await this.mapWithConcurrency(inputsToSign, 8, async ({ token, permInputIndex }) => {
+      const unlocker = pushdrop.unlock(
+        WalletPermissionsManager.PERM_TOKEN_ENCRYPTION_PROTOCOL,
+        '1',
+        'self',
+        'all',
+        false,
+        1,
+        LockingScript.fromHex(token.outputScript)
+      )
+      const unlockingScript = await unlocker.sign(tx, permInputIndex)
+      return { permInputIndex, unlockingScriptHex: unlockingScript.toHex() }
+    })
+
+    for (const s of signed) {
+      spends[s.permInputIndex] = { unlockingScript: s.unlockingScriptHex }
+    }
+
+    const { txid } = await this.underlying.signAction({
+      reference: signableTransaction.reference,
+      spends
+    })
+    if (!txid) throw new Error('Failed to finalize revoke transaction')
+  }
+
   /**
    * Revokes a permission token by spending it with no replacement output.
    * The manager builds a BRC-100 transaction that consumes the token, effectively invalidating it.
@@ -3703,22 +3959,29 @@ export class WalletPermissionsManager implements WalletInterface {
     const originalDescription = args.description
     const originalInputDescriptions = {}
     const originalOutputDescriptions = {}
-    args.description = await this.maybeEncryptMetadata(args.description)
-    for (let i = 0; i < (args.inputs || []).length; i++) {
-      if (args.inputs![i].inputDescription) {
-        originalInputDescriptions[i] = args.inputs![i].inputDescription
-        args.inputs![i].inputDescription = await this.maybeEncryptMetadata(args.inputs![i].inputDescription)
+    const inputEncryptionTasks = (args.inputs || []).map(async (input, i) => {
+      if (!input.inputDescription) return
+      originalInputDescriptions[i] = input.inputDescription
+      input.inputDescription = await this.maybeEncryptMetadata(input.inputDescription)
+    })
+
+    const outputEncryptionTasks = (args.outputs || []).map(async (output, i) => {
+      if (output.outputDescription) {
+        originalOutputDescriptions[i] = output.outputDescription
+        output.outputDescription = await this.maybeEncryptMetadata(output.outputDescription)
       }
-    }
-    for (let i = 0; i < (args.outputs || []).length; i++) {
-      if (args.outputs![i].outputDescription) {
-        originalOutputDescriptions[i] = args.outputs![i].outputDescription
-        args.outputs![i].outputDescription = await this.maybeEncryptMetadata(args.outputs![i].outputDescription)
+      if (output.customInstructions) {
+        output.customInstructions = await this.maybeEncryptMetadata(output.customInstructions)
       }
-      if (args.outputs![i].customInstructions) {
-        args.outputs![i].customInstructions = await this.maybeEncryptMetadata(args.outputs![i].customInstructions!)
-      }
-    }
+    })
+
+    await Promise.all([
+      (async () => {
+        args.description = await this.maybeEncryptMetadata(args.description)
+      })(),
+      ...inputEncryptionTasks,
+      ...outputEncryptionTasks
+    ])
 
     /**
      * 6) Call the underlying wallet's createAction.
@@ -4459,44 +4722,46 @@ export class WalletPermissionsManager implements WalletInterface {
     let [_, originator] = args
     if (this.config.seekGroupedPermission && originator) {
       const { normalized: normalizedOriginator } = this.prepareOriginator(originator)
-      originator = normalizedOriginator
+      const normalized = normalizedOriginator
 
-      // 1. Fetch manifest.json from the originator
-      const groupPermissions = await this.fetchManifestGroupPermissions(originator)
-      if (groupPermissions) {
-        // 2. Filter out already-granted permissions
-        const permissionsToRequest = await this.filterAlreadyGrantedPermissions(originator, groupPermissions)
+      await this.withGroupedPermissionFlowLock(normalized, async () => {
+        // 1. Fetch manifest.json from the originator
+        const groupPermissions = await this.fetchManifestGroupPermissions(normalized)
+        if (groupPermissions) {
+          // 2. Filter out already-granted permissions
+          const permissionsToRequest = await this.filterAlreadyGrantedPermissions(normalized, groupPermissions)
 
-        // 3. If any permissions are left to request, start the flow
-        if (this.hasAnyPermissionsToRequest(permissionsToRequest)) {
-          const key = `group:${originator}`
-          if (this.activeRequests.has(key)) {
-            // Another call is already waiting, piggyback on it
-            await new Promise<boolean>((resolve, reject) => {
-              this.activeRequests.get(key)!.pending.push({ resolve, reject })
-            })
-          } else {
-            // This is the first call, create a new request
-            try {
-              await new Promise<boolean>(async (resolve, reject) => {
-                this.activeRequests.set(key, {
-                  request: { originator: originator as string, permissions: permissionsToRequest },
-                  pending: [{ resolve, reject }]
-                })
-
-                await this.callEvent('onGroupedPermissionRequested', {
-                  requestID: key,
-                  originator,
-                  permissions: permissionsToRequest
-                })
+          // 3. If any permissions are left to request, start the flow
+          if (this.hasAnyPermissionsToRequest(permissionsToRequest)) {
+            const key = `group:${normalized}`
+            if (this.activeRequests.has(key)) {
+              // Another call is already waiting, piggyback on it
+              await new Promise<boolean>((resolve, reject) => {
+                this.activeRequests.get(key)!.pending.push({ resolve, reject })
               })
-            } catch (e) {
-              // Permission was denied, re-throw to stop execution
-              throw e
+            } else {
+              // This is the first call, create a new request
+              try {
+                await new Promise<boolean>(async (resolve, reject) => {
+                  this.activeRequests.set(key, {
+                    request: { originator: normalized as string, permissions: permissionsToRequest },
+                    pending: [{ resolve, reject }]
+                  })
+
+                  await this.callEvent('onGroupedPermissionRequested', {
+                    requestID: key,
+                    originator: normalized,
+                    permissions: permissionsToRequest
+                  })
+                })
+              } catch (e) {
+                // Permission was denied, re-throw to stop execution
+                throw e
+              }
             }
           }
         }
-      }
+      })
     }
 
     // Finally, after handling grouped permissions, call the underlying method.
@@ -4713,5 +4978,13 @@ export class WalletPermissionsManager implements WalletInterface {
       case 'spending':
         return `spend:${normalizedOriginator}:${r.spending?.satoshis}`
     }
+  }
+
+  private buildActiveRequestKey(r: PermissionRequest): string {
+    const base = this.buildRequestKey(r)
+    if (r.type === 'protocol' || r.type === 'basket' || r.type === 'certificate') {
+      return `${base}:${r.usageType ?? ''}`
+    }
+    return base
   }
 }

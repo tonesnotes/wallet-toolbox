@@ -32,7 +32,7 @@ const mockWalletBuilder = jest.fn(
 )
 
 describe('ShamirWalletManager', () => {
-  jest.spyOn(console, 'warn').mockImplementation((...args: any[]) => {});
+  jest.spyOn(console, 'warn').mockImplementation((...args: any[]) => {})
 
   describe('Configuration', () => {
     it('should use default 2-of-3 configuration', () => {

@@ -10,9 +10,12 @@ import { LiveBlockHeader } from '../../Api/BlockHeaderApi'
 describe('ChaintracksStorageIdb tests', () => {
   jest.setTimeout(99999999)
 
-  let logSpy: jest.SpyInstance, capturedLogs: string[] = [];
+  let logSpy: jest.SpyInstance,
+    capturedLogs: string[] = []
   beforeAll(async () => {
-    logSpy = jest.spyOn(console, 'log').mockImplementation((...args: any[]) => { capturedLogs.push(args.map(String).join(' ')); });
+    logSpy = jest.spyOn(console, 'log').mockImplementation((...args: any[]) => {
+      capturedLogs.push(args.map(String).join(' '))
+    })
   })
 
   test('0', async () => {

@@ -4,6 +4,12 @@ This document captures the history of significant changes to the wallet-toolbox 
 The git commit history contains the details but is unable to draw
 attention to changes that materially alter behavior or extend functionality.
 
+## wallet-toolbox 2.0.4
+
+- Added better group permissions and PACT protocol support
+- Added new function for mass revokation of permissions and optimized permission granting flow
+- Promise.all!!!
+
 ## wallet-toolbox 2.0.3
 
 Hide customInstructions from listActions results.

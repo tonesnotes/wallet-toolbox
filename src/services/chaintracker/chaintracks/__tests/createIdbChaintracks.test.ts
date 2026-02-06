@@ -12,16 +12,19 @@ import 'fake-indexeddb/auto'
 describe('createIdbChaintracks tests', () => {
   jest.setTimeout(99999999)
 
-  let logSpy: jest.SpyInstance, capturedLogs: string[] = [];
+  let logSpy: jest.SpyInstance,
+    capturedLogs: string[] = []
   beforeAll(async () => {
-    logSpy = jest.spyOn(console, 'log').mockImplementation((...args: any[]) => { capturedLogs.push(args.map(String).join(' ')); });
+    logSpy = jest.spyOn(console, 'log').mockImplementation((...args: any[]) => {
+      capturedLogs.push(args.map(String).join(' '))
+    })
   })
 
   test('0', async () => {
     const target: Chain = 'main'
     if (_tu.noEnv(target)) return
     // Test runs over two minutes long...
-    return;
+    return
 
     const env = _tu.getEnv(target)
     const { chain, chaintracks, storage, available } = await createIdbChaintracks(env.chain, env.whatsonchainApiKey)
