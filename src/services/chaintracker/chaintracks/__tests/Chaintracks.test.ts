@@ -12,9 +12,12 @@ const rootFolder = './src/services/chaintracker/chaintracks/__tests/data'
 describe('Chaintracks tests', () => {
   jest.setTimeout(99999999)
 
-  let logSpy: jest.SpyInstance, capturedLogs: string[] = [];
+  let logSpy: jest.SpyInstance,
+    capturedLogs: string[] = []
   beforeAll(async () => {
-    logSpy = jest.spyOn(console, 'log').mockImplementation((...args: any[]) => { capturedLogs.push(args.map(String).join(' ')); });
+    logSpy = jest.spyOn(console, 'log').mockImplementation((...args: any[]) => {
+      capturedLogs.push(args.map(String).join(' '))
+    })
   })
 
   test.skip('0 basic operation mainnet', async () => {

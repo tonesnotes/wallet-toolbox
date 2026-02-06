@@ -11,16 +11,18 @@ import { HeightRange } from '../../util/HeightRange'
 import { _tu } from '../../../../../../test/utils/TestUtilsWalletStorage'
 
 describe('WhatsOnChainServices tests', () => {
-
   jest.setTimeout(999999999)
 
   const chain: Chain = 'main'
   const options = WhatsOnChainServices.createWhatsOnChainServicesOptions(chain)
   const woc = new WhatsOnChainServices(options)
 
-  let logSpy: jest.SpyInstance, capturedLogs: string[] = [];
+  let logSpy: jest.SpyInstance,
+    capturedLogs: string[] = []
   beforeAll(async () => {
-    logSpy = jest.spyOn(console, 'log').mockImplementation((...args: any[]) => { capturedLogs.push(args.map(String).join(' ')); });
+    logSpy = jest.spyOn(console, 'log').mockImplementation((...args: any[]) => {
+      capturedLogs.push(args.map(String).join(' '))
+    })
   })
 
   test('getHeaderByHash', async () => {
