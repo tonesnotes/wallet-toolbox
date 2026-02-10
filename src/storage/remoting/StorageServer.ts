@@ -98,7 +98,9 @@ export class StorageServer {
         return res.status(400).json({ error: { code: -32600, message: 'Invalid Request' } })
       }
 
-      console.log(`StorageServer POST: method=${method} user=${req.auth.identityKey} id=${id} params=${JSON.stringify(params || '').slice(0, 256)}`)
+      console.log(
+        `StorageServer POST: method=${method} user=${req.auth.identityKey} id=${id} params=${JSON.stringify(params || '').slice(0, 256)}`
+      )
 
       try {
         // Dispatch the method call:

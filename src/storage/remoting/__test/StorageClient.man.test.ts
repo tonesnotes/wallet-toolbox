@@ -42,7 +42,7 @@ describe('StorageClient to tagged revision manual tests', () => {
           options: {
             randomizeOutputs: false,
             acceptDelayedBroadcast: false
-          },
+          }
         })
         expect(car.txid).toBeTruthy()
         console.log(`Created outpoint: ${car.txid}:0`)
@@ -61,13 +61,13 @@ describe('StorageClient to tagged revision manual tests', () => {
               {
                 unlockingScriptLength,
                 outpoint: outputs.outputs[0].outpoint,
-                inputDescription: `consume ${testCode}`,
+                inputDescription: `consume ${testCode}`
               }
             ],
             options: {
               randomizeOutputs: false,
               acceptDelayedBroadcast: false
-            },
+            }
           })
           expect(cas.signableTransaction).toBeTruthy()
           if (cas.signableTransaction) {
@@ -150,7 +150,7 @@ describe('StorageClient to tagged revision manual tests', () => {
           options: {
             randomizeOutputs: false,
             acceptDelayedBroadcast
-          },
+          }
         })
         createPromises.push(car)
       }
@@ -168,7 +168,6 @@ describe('StorageClient to tagged revision manual tests', () => {
     const beef = Beef.fromBinary(outputs.BEEF!)
 
     for (let i = 0; i < count; i++) {
-
       const o = outputs.outputs[i]
       if (o && o.outpoint && outputs.BEEF) {
         // Consume the first output found...
@@ -185,20 +184,22 @@ describe('StorageClient to tagged revision manual tests', () => {
             {
               unlockingScriptLength,
               outpoint: o.outpoint,
-              inputDescription: `consume ${testCode}`,
+              inputDescription: `consume ${testCode}`
             }
           ],
           options: {
             randomizeOutputs: false,
             acceptDelayedBroadcast
-          },
+          }
         })
         consumeCreatePromises.push(cas)
       }
     }
 
     const consumeCreateResults = await Promise.all(consumeCreatePromises)
-    console.log(`${consumeCreatePromises.length} consumeCreatePromises resulting in ${consumeCreateResults.length} consumeCreateResults`)
+    console.log(
+      `${consumeCreatePromises.length} consumeCreatePromises resulting in ${consumeCreateResults.length} consumeCreateResults`
+    )
 
     const consumeSignPromises: Promise<SignActionResult>[] = []
 
@@ -226,9 +227,11 @@ describe('StorageClient to tagged revision manual tests', () => {
         consumeSignPromises.push(sr)
       }
     }
-    
+
     const consumeSignResults = await Promise.all(consumeSignPromises)
-    console.log(`${consumeSignPromises.length} consumeSignPromises resulting in ${consumeSignResults.length} consumeSignResults`)
+    console.log(
+      `${consumeSignPromises.length} consumeSignPromises resulting in ${consumeSignResults.length} consumeSignResults`
+    )
 
     for (const sr of consumeSignResults) {
       expect(sr.txid).toBeTruthy()
