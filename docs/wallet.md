@@ -7726,7 +7726,7 @@ disableMapiCallback?: boolean
 ###### Property exchangeratesapiKey
 
 API key for use accessing fiat exchange rates API at
-`http://api.exchangeratesapi.io/v1/latest?access_key=${key}`
+`https://api.exchangeratesapi.io/v1/latest?access_key=${key}`
 
 Obtain your own api key here:
 https://manage.exchangeratesapi.io/signup/free

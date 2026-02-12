@@ -266,7 +266,7 @@ export interface WalletServicesOptions {
   disableMapiCallback?: boolean
   /**
    * API key for use accessing fiat exchange rates API at
-   * `http://api.exchangeratesapi.io/v1/latest?access_key=${key}`
+   * `https://api.exchangeratesapi.io/v1/latest?access_key=${key}`
    *
    * Obtain your own api key here:
    * https://manage.exchangeratesapi.io/signup/free
@@ -442,7 +442,7 @@ export interface PostTxResultForTxidError {
   more?: object
 }
 
-export interface PostBeefResult extends PostTxsResult {}
+export interface PostBeefResult extends PostTxsResult { }
 
 /**
  * Properties on array items of result returned from `WalletServices` function `postBeef`.
