@@ -59,14 +59,19 @@ export class StorageServer {
       if (contentLength > 0 && contentLength < 1000 && req.method === 'POST') {
         const logObj: any = {
           source: 'StorageServer short-request-log',
+          contentLength,
+          contentType: req.headers['content-type'] || '-',
           ts: new Date().toISOString(),
           url: req.originalUrl,
           ip: req.ip || req.socket.remoteAddress,
           ua: req.headers['user-agent'] || '-',
-          contentType: req.headers['content-type'] || '-',
-          contentLength,
           headers: { ...req.headers } // shallow copy
         }
+        const traceContext = (req.headers['X-Cloud-Trace-Context'] || req.headers['x-cloud-trace-context'])?.split(
+          '/'
+        )[0]
+        if (traceContext)
+          logObj['logging.googleapis.com/trace'] = `projects/computing-with-integrity/traces/${traceContext}`
 
         const chunks: Buffer[] = []
         req.on('data', chunk => chunks.push(Buffer.from(chunk)))
@@ -81,7 +86,7 @@ export class StorageServer {
             logObj.bodyEncoding = 'hex'
           }
 
-          console.log(JSON.stringify(logObj, null, 2))
+          console.log(JSON.stringify(logObj))
         })
       }
 
