@@ -109,9 +109,9 @@ describe('StorageClient to tagged revision manual tests', () => {
   test('1 async createAction signAction', async () => {
     if (_tu.noEnv('main')) return
     const env = _tu.getEnv('main')
-    const tag = 'v1-0-149---' // revision tags must be followed by '---' as a GCR service URL prefix.
-    const endpointUrl = `https://${tag}prod-storage-921101068003.us-west1.run.app`
-    // const endpointUrl = `https://storage.babbage.systems`
+    const tag = 'v1-0-155---' // revision tags must be followed by '---' as a GCR service URL prefix.
+    // const endpointUrl = `https://${tag}prod-storage-921101068003.us-west1.run.app`
+    const endpointUrl = `https://storage.babbage.systems`
     const s = await _tu.createTestWalletWithStorageClient({
       rootKeyHex: env.devKeys[env.identityKey],
       endpointUrl,
