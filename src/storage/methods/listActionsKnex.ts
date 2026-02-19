@@ -33,8 +33,12 @@ export async function listActions(
     actions: []
   }
 
-  const { from: actionTimeFrom, to: actionTimeTo, timeFilterRequested, remainingLabels: ordinaryLabelsPreSpecOp } =
-    parseBrc114ActionTimeLabels(vargs.labels)
+  const {
+    from: actionTimeFrom,
+    to: actionTimeTo,
+    timeFilterRequested,
+    remainingLabels: ordinaryLabelsPreSpecOp
+  } = parseBrc114ActionTimeLabels(vargs.labels)
 
   const createdAtFrom = actionTimeFrom !== undefined ? new Date(actionTimeFrom) : undefined
   const createdAtTo = actionTimeTo !== undefined ? new Date(actionTimeTo) : undefined

@@ -18,7 +18,8 @@ export function parseBrc114ActionTimeLabels(labels: string[] | undefined): Parse
       timeFilterRequested = true
       if (from !== undefined) throw new WERR_INVALID_PARAMETER('labels', 'valid. Duplicate action time from label.')
       const v = label.slice('action time from '.length)
-      if (!/^[0-9]+$/.test(v)) throw new WERR_INVALID_PARAMETER('labels', 'valid. Invalid action time from timestamp value.')
+      if (!/^[0-9]+$/.test(v))
+        throw new WERR_INVALID_PARAMETER('labels', 'valid. Invalid action time from timestamp value.')
       const n = Number(v)
       if (!Number.isSafeInteger(n) || n < 0)
         throw new WERR_INVALID_PARAMETER('labels', 'valid. Invalid action time from timestamp value.')
@@ -32,7 +33,8 @@ export function parseBrc114ActionTimeLabels(labels: string[] | undefined): Parse
       timeFilterRequested = true
       if (to !== undefined) throw new WERR_INVALID_PARAMETER('labels', 'valid. Duplicate action time to label.')
       const v = label.slice('action time to '.length)
-      if (!/^[0-9]+$/.test(v)) throw new WERR_INVALID_PARAMETER('labels', 'valid. Invalid action time to timestamp value.')
+      if (!/^[0-9]+$/.test(v))
+        throw new WERR_INVALID_PARAMETER('labels', 'valid. Invalid action time to timestamp value.')
       const n = Number(v)
       if (!Number.isSafeInteger(n) || n < 0)
         throw new WERR_INVALID_PARAMETER('labels', 'valid. Invalid action time to timestamp value.')

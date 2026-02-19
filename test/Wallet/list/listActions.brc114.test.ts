@@ -52,7 +52,10 @@ describe('listActions BRC-114 action time label tests', () => {
     }
   })
 
-  async function insertThreeActions(ctx: any, runLabel: string): Promise<{ a: InsertedAction; b: InsertedAction; c: InsertedAction }> {
+  async function insertThreeActions(
+    ctx: any,
+    runLabel: string
+  ): Promise<{ a: InsertedAction; b: InsertedAction; c: InsertedAction }> {
     const storage = ctx.activeStorage
     const user = { userId: ctx.userId } as any
 
@@ -112,26 +115,33 @@ describe('listActions BRC-114 action time label tests', () => {
 
   test('0_invalid_brc114_time_control_labels', async () => {
     for (const { wallet } of ctxs) {
-      await expectToThrowWERR(sdk.WERR_INVALID_PARAMETER, async () =>
-        await wallet.listActions({ labels: ['action time from 0', 'action time from 1'] })
+      await expectToThrowWERR(
+        sdk.WERR_INVALID_PARAMETER,
+        async () => await wallet.listActions({ labels: ['action time from 0', 'action time from 1'] })
       )
-      await expectToThrowWERR(sdk.WERR_INVALID_PARAMETER, async () =>
-        await wallet.listActions({ labels: ['action time to 1', 'action time to 2'] })
+      await expectToThrowWERR(
+        sdk.WERR_INVALID_PARAMETER,
+        async () => await wallet.listActions({ labels: ['action time to 1', 'action time to 2'] })
       )
-      await expectToThrowWERR(sdk.WERR_INVALID_PARAMETER, async () =>
-        await wallet.listActions({ labels: ['action time from 2', 'action time to 1'] })
+      await expectToThrowWERR(
+        sdk.WERR_INVALID_PARAMETER,
+        async () => await wallet.listActions({ labels: ['action time from 2', 'action time to 1'] })
       )
-      await expectToThrowWERR(sdk.WERR_INVALID_PARAMETER, async () =>
-        await wallet.listActions({ labels: ['action time from abc'] })
+      await expectToThrowWERR(
+        sdk.WERR_INVALID_PARAMETER,
+        async () => await wallet.listActions({ labels: ['action time from abc'] })
       )
-      await expectToThrowWERR(sdk.WERR_INVALID_PARAMETER, async () =>
-        await wallet.listActions({ labels: ['action time to -1'] })
+      await expectToThrowWERR(
+        sdk.WERR_INVALID_PARAMETER,
+        async () => await wallet.listActions({ labels: ['action time to -1'] })
       )
-      await expectToThrowWERR(sdk.WERR_INVALID_PARAMETER, async () =>
-        await wallet.listActions({ labels: ['action time from 9999999999999999999999999'] })
+      await expectToThrowWERR(
+        sdk.WERR_INVALID_PARAMETER,
+        async () => await wallet.listActions({ labels: ['action time from 9999999999999999999999999'] })
       )
-      await expectToThrowWERR(sdk.WERR_INVALID_PARAMETER, async () =>
-        await wallet.listActions({ labels: ['action time from 123abc'] })
+      await expectToThrowWERR(
+        sdk.WERR_INVALID_PARAMETER,
+        async () => await wallet.listActions({ labels: ['action time from 123abc'] })
       )
     }
   })
