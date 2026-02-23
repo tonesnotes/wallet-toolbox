@@ -132,8 +132,9 @@ export type GroupedPermissionEventHandler = (request: GroupedPermissionRequest) 
 export interface CounterpartyPermissions {
   description?: string
   protocols: Array<{
-    protocolID: WalletProtocol
-    description: string
+    protocolName: string
+    protocolID?: WalletProtocol
+    description?: string
   }>
 }
 
@@ -977,24 +978,25 @@ export class WalletPermissionsManager implements WalletInterface {
 
       const grantedProtocols = params.granted.protocolPermissions || []
       const protocolTokens = await this.mapWithConcurrency(grantedProtocols, 8, async p => {
+        const counterparty = (p.protocolID?.[0] ?? 0) === 1 ? 'self' : p.counterparty || 'self'
         const token = await this.findProtocolToken(
           originator,
           false,
           p.protocolID,
-          p.counterparty || 'self',
+          counterparty,
           true,
           originLookupValues
         )
-        return { p, token }
+        return { p, token, counterparty }
       })
 
-      for (const { p, token } of protocolTokens) {
+      for (const { p, token, counterparty } of protocolTokens) {
         const request: PermissionRequest = {
           type: 'protocol',
           originator,
           privileged: false,
           protocolID: p.protocolID,
-          counterparty: p.counterparty || 'self',
+          counterparty,
           reason: p.description
         }
         if (token) {
@@ -1098,7 +1100,20 @@ export class WalletPermissionsManager implements WalletInterface {
     const { originator, counterparty, permissions: requestedPermissions, displayOriginator } = originalRequest
     const originLookupValues = this.buildOriginatorLookupValues(displayOriginator, originator)
 
-    if (params.granted.protocols?.some(g => !requestedPermissions.protocols.find(r => deepEqual(r, g)))) {
+    const getProtoName = (p: any): string | undefined => {
+      if (!p) return undefined
+      if (typeof p.protocolName === 'string') return p.protocolName
+      if (Array.isArray(p.protocolID) && typeof p.protocolID[1] === 'string') return p.protocolID[1]
+      return undefined
+    }
+
+    if (
+      params.granted.protocols?.some(g => {
+        const gName = getProtoName(g)
+        if (!gName) return true
+        return !requestedPermissions.protocols.some(r => r.protocolName === gName)
+      })
+    ) {
       throw new Error('Granted protocol permissions are not a subset of the original request.')
     }
 
@@ -1110,23 +1125,28 @@ export class WalletPermissionsManager implements WalletInterface {
 
     const grantedProtocols = params.granted.protocols || []
     const protocolTokens = await this.mapWithConcurrency(grantedProtocols, 8, async p => {
+      const protocolName = getProtoName(p)
+      if (!protocolName) {
+        throw new Error('Invalid counterparty permission protocol entry: missing protocolName/protocolID.')
+      }
+      const protocolID: WalletProtocol = [2, protocolName]
       const token = await this.findProtocolToken(
         originator,
         false,
-        p.protocolID,
+        protocolID,
         counterparty,
         true,
         originLookupValues
       )
-      return { p, token }
+      return { p, token, protocolID }
     })
 
-    for (const { p, token } of protocolTokens) {
+    for (const { p, token, protocolID } of protocolTokens) {
       const request: PermissionRequest = {
         type: 'protocol',
         originator,
         privileged: false,
-        protocolID: p.protocolID,
+        protocolID,
         counterparty,
         reason: p.description
       }
@@ -1195,6 +1215,10 @@ export class WalletPermissionsManager implements WalletInterface {
     // 2) If security level=0, we consider it "open" usage
     const [level, protoName] = protocolID
     if (level === 0) return true
+
+    if (level === 1) {
+      counterparty = 'self'
+    }
 
     // 3) If protocol is admin-reserved, block
     if (this.isAdminProtocol(protocolID)) {
@@ -1579,61 +1603,57 @@ export class WalletPermissionsManager implements WalletInterface {
     })
   }
 
-  private mergeCounterpartyPermissions(
-    a: CounterpartyPermissions | null,
-    b: CounterpartyPermissions | null
-  ): CounterpartyPermissions | null {
-    if (!a && !b) return null
-    const protocols: CounterpartyPermissions['protocols'] = []
-    for (const src of [a, b]) {
-      for (const p of src?.protocols || []) {
-        if (!protocols.find(x => deepEqual(x.protocolID, p.protocolID))) {
-          protocols.push(p)
-        }
-      }
-    }
-    if (protocols.length === 0) return null
-    return {
-      description: a?.description ?? b?.description,
-      protocols
-    }
-  }
-
-  private deriveLegacyCounterpartyPermissions(
-    groupPermissions: GroupedPermissions | null
-  ): CounterpartyPermissions | null {
-    const protocols = (groupPermissions?.protocolPermissions || [])
-      .filter(p => p?.counterparty === '')
-      .filter(p => Array.isArray(p?.protocolID) && (p.protocolID[0] === 1 || p.protocolID[0] === 2))
-      .map(p => ({
-        protocolID: p.protocolID,
-        description: p.description
-      }))
-
-    if (!protocols.length) return null
-    return {
-      protocols
-    }
-  }
-
   private isProtocolInCounterpartyPermissions(
     protocolID: WalletProtocol,
     counterpartyPermissions: CounterpartyPermissions
   ): boolean {
-    return !!counterpartyPermissions.protocols.find(p => deepEqual(p.protocolID, protocolID))
+    const [, name] = protocolID
+    return !!counterpartyPermissions.protocols.find(p => p.protocolName === name)
   }
 
   private validateCounterpartyPermissions(raw: any): CounterpartyPermissions | null {
     if (!raw || !Array.isArray(raw.protocols) || raw.protocols.length === 0) return null
 
-    const validProtocols = raw.protocols.filter((p: any) => {
-      return (
-        Array.isArray(p?.protocolID) &&
-        (p.protocolID[0] === 1 || p.protocolID[0] === 2) &&
-        typeof p.protocolID[1] === 'string' &&
-        typeof p?.description === 'string'
-      )
-    })
+    const getCI = (obj: any, key: string): any => {
+      if (!obj || typeof obj !== 'object') return undefined
+      const lower = key.toLowerCase()
+      const found = Object.keys(obj).find(k => k.toLowerCase() === lower)
+      return found ? obj[found] : undefined
+    }
+
+    const parseProtocolId = (v: any): string | null => {
+      if (!Array.isArray(v)) return null
+      if (v[0] !== 2) return null
+      if (typeof v[1] !== 'string') return null
+      return v[1]
+    }
+
+    const validProtocols: CounterpartyPermissions['protocols'] = raw.protocols
+      .map((p: any) => {
+        const protocolName = getCI(p, 'protocolName')
+        if (typeof protocolName === 'string') {
+          return {
+            protocolName,
+            protocolID: [2, protocolName] as WalletProtocol,
+            description: typeof p?.description === 'string' ? p.description : undefined
+          }
+        }
+
+        const protocolIdRaw =
+          getCI(p, 'protocolID') ??
+          getCI(p, 'protocolId') ??
+          getCI(p, 'protocolid')
+
+        const parsed = parseProtocolId(protocolIdRaw)
+        if (!parsed) return null
+
+        return {
+          protocolName: parsed,
+          protocolID: [2, parsed] as WalletProtocol,
+          description: typeof p?.description === 'string' ? p.description : undefined
+        }
+      })
+      .filter(Boolean) as any
 
     if (validProtocols.length === 0) return null
 
@@ -1674,14 +1694,12 @@ export class WalletPermissionsManager implements WalletInterface {
           const counterpartyPermissionsDeclared: CounterpartyPermissions | null = this.validateCounterpartyPermissions(
             namespace?.counterpartyPermissions
           )
-          const counterpartyPermissionsLegacy: CounterpartyPermissions | null =
-            this.deriveLegacyCounterpartyPermissions(groupPermissions)
-          const counterpartyPermissions: CounterpartyPermissions | null = this.mergeCounterpartyPermissions(
-            counterpartyPermissionsDeclared,
-            counterpartyPermissionsLegacy
-          )
-          this.manifestCache.set(originator, { groupPermissions, counterpartyPermissions, fetchedAt: Date.now() })
-          return { groupPermissions, counterpartyPermissions }
+          this.manifestCache.set(originator, {
+            groupPermissions,
+            counterpartyPermissions: counterpartyPermissionsDeclared,
+            fetchedAt: Date.now()
+          })
+          return { groupPermissions, counterpartyPermissions: counterpartyPermissionsDeclared }
         }
       } catch (e) {}
 
@@ -1819,7 +1837,7 @@ export class WalletPermissionsManager implements WalletInterface {
     const hasToken = await this.hasProtocolPermission({
       originator,
       privileged: false,
-      protocolID: firstProtocol.protocolID,
+      protocolID: [2, firstProtocol.protocolName],
       counterparty
     })
 
@@ -1850,7 +1868,7 @@ export class WalletPermissionsManager implements WalletInterface {
       return null
     }
     const [level] = currentRequest.protocolID!
-    if (level !== 1 && level !== 2) {
+    if (level !== 2) {
       return null
     }
 
@@ -1881,7 +1899,7 @@ export class WalletPermissionsManager implements WalletInterface {
         const hasPerm = await this.hasProtocolPermission({
           originator,
           privileged: false,
-          protocolID: p.protocolID,
+          protocolID: [2, p.protocolName],
           counterparty
         })
         return hasPerm ? null : p
@@ -1910,7 +1928,7 @@ export class WalletPermissionsManager implements WalletInterface {
         counterpartyLabel?: string
       }
       for (const p of permissionsToRequest.protocols) {
-        if (!existingRequest.permissions.protocols.find(x => deepEqual(x, p))) {
+        if (!existingRequest.permissions.protocols.find(x => x.protocolName === p.protocolName)) {
           existingRequest.permissions.protocols.push(p)
         }
       }
@@ -2141,7 +2159,7 @@ export class WalletPermissionsManager implements WalletInterface {
           if (level === 2 && (p.counterparty === undefined || p.counterparty === null)) {
             return false
           }
-          const manifestCp = p.counterparty ?? 'self'
+          const manifestCp = level === 1 ? 'self' : (p.counterparty ?? 'self')
           return deepEqual(p.protocolID, pid) && manifestCp === cp
         })
       }
@@ -2233,6 +2251,10 @@ export class WalletPermissionsManager implements WalletInterface {
       displayOriginator: r.displayOriginator ?? r.previousToken?.rawOriginator ?? r.originator
     }
 
+    if (preparedRequest.type === 'protocol' && preparedRequest.protocolID?.[0] === 1) {
+      preparedRequest.counterparty = 'self'
+    }
+
     const key = this.buildActiveRequestKey(preparedRequest)
 
     // If there's already a queue for the same resource, we piggyback on it
@@ -2296,6 +2318,7 @@ export class WalletPermissionsManager implements WalletInterface {
           case 'protocol':
             await this.callEvent('onProtocolPermissionRequested', {
               ...preparedRequest,
+              counterparty: preparedRequest.protocolID?.[0] === 1 ? undefined : preparedRequest.counterparty,
               requestID: key
             })
             break
@@ -3232,13 +3255,14 @@ export class WalletPermissionsManager implements WalletInterface {
     switch (r.type) {
       case 'protocol': {
         const [secLevel, protoName] = r.protocolID!
+        const counterparty = secLevel === 2 ? (r.counterparty ?? 'self') : 'self'
         return [
           await this.encryptPermissionTokenField(r.originator), // domain
           await this.encryptPermissionTokenField(String(expiry)), // expiry
           await this.encryptPermissionTokenField(r.privileged === true ? 'true' : 'false'),
           await this.encryptPermissionTokenField(String(secLevel)),
           await this.encryptPermissionTokenField(protoName),
-          await this.encryptPermissionTokenField(r.counterparty!)
+          await this.encryptPermissionTokenField(counterparty)
         ]
       }
       case 'basket': {
@@ -3282,7 +3306,7 @@ export class WalletPermissionsManager implements WalletInterface {
         tags.push(`protocolName ${r.protocolID![1]}`)
         tags.push(`protocolSecurityLevel ${r.protocolID![0]}`)
         if (r.protocolID![0] === 2) {
-          tags.push(`counterparty ${r.counterparty}`)
+          tags.push(`counterparty ${r.counterparty ?? 'self'}`)
         }
         break
       }
