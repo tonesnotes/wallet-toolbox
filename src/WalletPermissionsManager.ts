@@ -978,7 +978,7 @@ export class WalletPermissionsManager implements WalletInterface {
 
       const grantedProtocols = params.granted.protocolPermissions || []
       const protocolTokens = await this.mapWithConcurrency(grantedProtocols, 8, async p => {
-        const counterparty = (p.protocolID?.[0] ?? 0) === 1 ? 'self' : p.counterparty || 'self'
+        const counterparty = (p.protocolID?.[0] ?? 0) === 1 ? '' : p.counterparty || 'self'
         const token = await this.findProtocolToken(
           originator,
           false,
@@ -1210,7 +1210,7 @@ export class WalletPermissionsManager implements WalletInterface {
     if (level === 0) return true
 
     if (level === 1) {
-      counterparty = 'self'
+      counterparty = ''
     }
 
     // 3) If protocol is admin-reserved, block
@@ -2149,7 +2149,7 @@ export class WalletPermissionsManager implements WalletInterface {
           if (level === 2 && (p.counterparty === undefined || p.counterparty === null)) {
             return false
           }
-          const manifestCp = level === 1 ? 'self' : (p.counterparty ?? 'self')
+          const manifestCp = level === 1 ? '' : (p.counterparty ?? 'self')
           return deepEqual(p.protocolID, pid) && manifestCp === cp
         })
       }
@@ -2242,7 +2242,7 @@ export class WalletPermissionsManager implements WalletInterface {
     }
 
     if (preparedRequest.type === 'protocol' && preparedRequest.protocolID?.[0] === 1) {
-      preparedRequest.counterparty = 'self'
+      preparedRequest.counterparty = ''
     }
 
     const key = this.buildActiveRequestKey(preparedRequest)
@@ -3245,7 +3245,7 @@ export class WalletPermissionsManager implements WalletInterface {
     switch (r.type) {
       case 'protocol': {
         const [secLevel, protoName] = r.protocolID!
-        const counterparty = secLevel === 2 ? (r.counterparty ?? 'self') : 'self'
+        const counterparty = secLevel === 2 ? (r.counterparty ?? 'self') : ''
         return [
           await this.encryptPermissionTokenField(r.originator), // domain
           await this.encryptPermissionTokenField(String(expiry)), // expiry
