@@ -75,4 +75,3 @@ describe('Services postBeef timeout behavior', () => {
     expect(services.postBeefServices.services.map(s => s.name)).toEqual(['slow', 'fast'])
   })
 })
-
